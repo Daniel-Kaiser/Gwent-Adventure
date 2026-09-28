@@ -696,6 +696,34 @@
     z-index: 5;
   }
 
+  .pile .drawsLeftBadge {
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    box-sizing: border-box;
+    border-radius: 11px;
+    background: linear-gradient(#2f5d3a, #1c3a24);
+    border: 1px solid #9fe0a8aa;
+    color: #eaffea;
+    font-family: 'BrandonGrotesque', 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+    box-shadow: 0 2px 6px #000a;
+    z-index: 6;
+    pointer-events: auto;
+  }
+  .pile .drawsLeftBadge.none {
+    background: linear-gradient(#4a4f58, #2c3038);
+    border-color: #ffffff44;
+    color: #c9ced6;
+  }
+
   .flyingCard { pointer-events: none; }
 
   /* ---- Right-side score / coin panel ---- */
@@ -1782,7 +1810,7 @@
     </div>
 
     <div class="pilePair">
-      <div class="pile deckPile" id="deckPileMe" title="Your deck"><div class="pileStack"></div><div class="pileCount" id="deckPileCountMe">0</div></div>
+      <div class="pile deckPile" id="deckPileMe" title="Your deck"><div class="pileStack"></div><div class="pileCount" id="deckPileCountMe">0</div><div class="drawsLeftBadge" id="drawsLeftMe" title="Draws left this round">0</div></div>
       <div class="pile discardPile" id="discardPileMe" title="Your discard pile"><div class="pileStack empty"></div><div class="pileCount" id="discardPileCountMe">0</div></div>
     </div>
   </div>
@@ -2559,6 +2587,25 @@ function willDrawAtEndOfTurn(side) {
   if (state.round === 1) floor = 8;
   else if (state.round === 2) floor = 4;
   return p.deck.length > floor;
+}
+
+/* How many more end-of-turn draws the engine will actually allow this
+   round -- derived from the same rules willDrawAtEndOfTurn() uses (deck
+   floor 8/4/0 by round, or the tutorial's cumulative caps), so the deck
+   badge can never disagree with real behavior. */
+function drawsLeftThisRound(side) {
+  if (!state) return 0;
+  const p = state.players[side];
+  if (p.passed) return 0;
+  if (state.tutorial) {
+    const cap = tutorialDrawCap();
+    if (cap === Infinity) return p.deck.length;
+    return Math.max(0, Math.min(p.deck.length, cap - tutorialDrawCount[side]));
+  }
+  let floor = 0;
+  if (state.round === 1) floor = 8;
+  else if (state.round === 2) floor = 4;
+  return Math.max(0, p.deck.length - floor);
 }
 
 function endOfTurnDraw(side) {
@@ -5110,6 +5157,13 @@ function renderPiles() {
 
   document.getElementById('deckPileCountMe').textContent = meDeck;
   document.getElementById('deckPileCountOpp').textContent = aiDeck;
+  const drawsEl = document.getElementById('drawsLeftMe');
+  if (drawsEl) {
+    const n = drawsLeftThisRound('player');
+    drawsEl.textContent = n;
+    drawsEl.classList.toggle('none', n === 0);
+    drawsEl.title = `Draws left this round: ${n}`;
+  }
   document.getElementById('discardPileCountMe').textContent = meDiscard.length;
   document.getElementById('discardPileCountOpp').textContent = aiDiscard.length;
 

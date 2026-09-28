@@ -1806,7 +1806,7 @@ const CARD_DB = {
   geralt:            { id: 'geralt', name: 'Geralt of Rivia', power: 8, tier: 'gold', img: 'cards/geralt.jpg', abilities: [] },
 
   wagon:             { id: 'wagon', name: 'Wagon', power: 2, tier: 'bronze', img: 'cards/wagon.jpg',
-                       abilities: [ { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 3) } ] },
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, effect: (ctx, target) => applyPowerDelta(target, 3) } ] },
   highwayman:        { id: 'highwayman', name: 'Highwayman', power: 2, tier: 'bronze', img: 'cards/highwayman.jpg', abilities: [], playTargetDamage: 2 },
   mercenary_mauler:  { id: 'mercenary_mauler', name: 'Mercenary Mauler', power: 1, tier: 'bronze', img: 'cards/mercenary_mauler.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 4, effect: (ctx, target) => applyDamage(target, 4) } ] },
@@ -1872,7 +1872,13 @@ const CARD_DB = {
   // Play: refresh the (used) Order of another bronze/token card on its
   // owner's board -- never another Blue Stripes Scout. See scoutRefreshTargets().
   blue_stripes_scout: { id: 'blue_stripes_scout', name: 'Blue Stripes Scout', power: 2, tier: 'bronze', faction: 'northern_realms', img: 'cards/blue_stripes_scout.jpg',
-                       abilities: [], playRefreshOrder: true },
+                       // Play AND Order: refresh a used Order on another own
+                       // bronze/token card (never a Scout). The Order is only
+                       // "ready" while such a target exists (validTargets).
+                       abilities: [ { trigger: 'order', needsTarget: true, isRefresh: true,
+                                      validTargets: (side, card) => scoutRefreshTargets(side, card),
+                                      effect: (ctx, target) => { refreshOrder(target); logMsg(`${target.name}'s Order is refreshed.`); } } ],
+                       playRefreshOrder: true },
   kaedweni_cavalry:  { id: 'kaedweni_cavalry', name: 'Kaedweni Cavalry', power: 3, tier: 'bronze', faction: 'northern_realms', img: 'cards/kaedweni_cavalry.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true,
                                       effect: (ctx, target) => { applyPowerDelta(target, 1); createTokensRightOf(ctx.side, ctx.card, 'soldier_token', 1); } } ] },
@@ -1883,6 +1889,17 @@ const CARD_DB = {
   // Play: if its owner has used fewer than 2 Orders this turn, it's discarded.
   siege_tower:       { id: 'siege_tower', name: 'Siege Tower', power: 6, tier: 'bronze', faction: 'northern_realms', img: 'cards/siege_tower.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => resolveSiegeTower(ctx.side, ctx.card) } ] },
+  // Order: +1 to another card. Its Order refreshes whenever its owner plays
+  // a card that has an Order (hand, revive, or an Order-bearing token) --
+  // see refreshOnOrderCardEntered().
+  temerian_drummer:  { id: 'temerian_drummer', name: 'Temerian Drummer', power: 2, tier: 'bronze', faction: 'northern_realms', img: 'cards/temerian_drummer.jpg',
+                       refreshOnOrderCardPlay: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, effect: (ctx, target) => applyPowerDelta(target, 1) } ] },
+  // Order: deal 1. Passive: +2 power when its owner uses exactly their 2nd
+  // Order in a turn (its own included) -- see noteOrderUsed().
+  temerian_infantry: { id: 'temerian_infantry', name: 'Temerian Infantry', power: 2, tier: 'bronze', faction: 'northern_realms', img: 'cards/temerian_infantry.jpg',
+                       buffOnSecondOrder: 2,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
   // Token: never in random decks or the Card Library, and it vanishes when
   // it leaves the board (never reaches a discard pile) -- see sendToGraveyard.
   soldier_token:     { id: 'soldier_token', name: 'Soldier', power: 1, tier: 'token', faction: 'northern_realms', img: 'cards/soldier_token.jpg',
@@ -2458,6 +2475,9 @@ function isOrderReady(side, card) {
   if (card.orderUsed) return false;
   if (card.playedTurn === undefined || state.turnCounter <= card.playedTurn) return false;
   if (state.players[side].hand.length === 0) return false;
+  // Orders that can only aim at specific targets (e.g. Blue Stripes Scout's
+  // refresh) aren't ready at all while none exist.
+  if (ability.validTargets && ability.validTargets(side, card).length === 0) return false;
   return true;
 }
 function hasAnyUsableOrder(side) {
@@ -2479,7 +2499,24 @@ function noteOrderUsed(side) {
       refreshOrder(c);
       logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name}'s Order is refreshed.`);
     });
+    // Temerian Infantry: +2 power on its owner's 2nd Order of the turn
+    p.board.filter(c => c.buffOnSecondOrder).forEach(c => {
+      applyPowerDelta(c, c.buffOnSecondOrder);
+      logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name} gains ${c.buffOnSecondOrder} power.`);
+    });
   }
+}
+
+/* Temerian Drummer: its Order refreshes whenever its owner puts a card with
+   an Order ability into play -- a hand play or a revive (both reach
+   notifyAllyPlay) or an Order-bearing token (createTokensRightOf). No
+   per-turn limit. The entering card itself is never the one refreshed. */
+function refreshOnOrderCardEntered(side, enteredCard) {
+  if (!enteredCard || !findOrderAbility(enteredCard)) return;
+  state.players[side].board.filter(c => c.refreshOnOrderCardPlay && c.uid !== enteredCard.uid && c.orderUsed).forEach(c => {
+    refreshOrder(c);
+    logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name}'s Order is refreshed.`);
+  });
 }
 function ordersUsedThisTurn(side) {
   return state.players[side].ordersUsedThisTurn || 0;
@@ -2518,6 +2555,7 @@ function createTokensRightOf(side, sourceCard, tokenId, count) {
     t._justCreated = true;
     board.splice(idx + 1 + i, 0, t);
     created.push(t);
+    refreshOnOrderCardEntered(side, t);
   }
   logMsg(`${side === 'player' ? 'You create' : 'Opponent creates'} ${count} ${CARD_DB[tokenId].name} token${count > 1 ? 's' : ''}.`);
   return created;
@@ -3214,6 +3252,7 @@ function notifyAllyPlay(side, playedCard, isFirstPlayThisTurn) {
       .filter(a => a.trigger === 'onAllyPlay')
       .forEach(a => a.effect(boardCard, { side, playedCard, isFirstPlayThisTurn, state }));
   });
+  refreshOnOrderCardEntered(side, playedCard);
   triggerDiscardReturnPassives(side, playedCard);
 }
 
@@ -3660,6 +3699,13 @@ async function aiUseAvailableOrders() {
         continue;
       }
       target = pickDamageTarget(killable, (a, b) => a.power < b.power);
+    } else if (ability.isRefresh) {
+      // Blue Stripes Scout's Order: only worth it if the refreshed Order would
+      // actually get used -- a buff, or a damage Order with a kill available.
+      target = aiPickScoutTarget(readyCard);
+      const ta = target && findOrderAbility(target);
+      const useful = ta && (!ta.isDamage || state.players.player.board.some(e => e.power > 0 && e.power <= ta.amount));
+      if (!useful) { heldBack.add(readyCard.uid); continue; }
     } else if (ability.needsTarget) {
       // buffs a chosen ally (e.g. Zoltan Chivay, Kaedweni Cavalry) -- pick
       // the strongest one (never itself if the ability excludes that)
@@ -3810,6 +3856,13 @@ async function aiTakeTurn() {
     // it's safe to let allies (e.g. Tridam Infantry) react to it.
     if (playedInfo) {
       notifyAllyPlay('ai', playedInfo.card, playedInfo.isFirstPlayThisTurn);
+      render();
+    }
+    // Orders that became ready again because of this play (e.g. Temerian
+    // Drummer refreshing, a Scout refresh) get used before the turn ends.
+    if (state.players.ai.board.some(c => isOrderReady('ai', c))) {
+      await delay(400);
+      await aiUseAvailableOrders();
       render();
     }
     // draw only happens once the turn is actually ending
@@ -5094,7 +5147,12 @@ function activateOrderAbility(side, card) {
   if (ability.isDiscardPlay) {
     activateDiscardPlayOrder(side, card, ability);
   } else if (ability.needsTarget) {
-    startTargeting({ side, card, kind: 'order', ability, excludeSelf: !!ability.excludeSelf });
+    const session = { side, card, kind: 'order', ability, excludeSelf: !!ability.excludeSelf };
+    if (ability.validTargets) {
+      const valid = new Set(ability.validTargets(side, card).map(c => c.uid));
+      session.filter = c => valid.has(c.uid);
+    }
+    startTargeting(session);
   } else {
     applyOrderAbility(side, card, ability, card, () => render());
   }

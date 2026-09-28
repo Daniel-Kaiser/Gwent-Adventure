@@ -1920,6 +1920,45 @@ const CARD_DB = {
   temerian_infantry: { id: 'temerian_infantry', name: 'Temerian Infantry', power: 2, tier: 'bronze', faction: 'northern_realms', img: 'cards/temerian_infantry.jpg',
                        buffOnSecondOrder: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  /* ---- Northern Realms silvers ---- */
+  // Play: 3 Soldier tokens to its right (after it lands, like Sergeant/PFI).
+  bronibor:          { id: 'bronibor', name: 'Bronibor', power: 2, tier: 'silver', faction: 'northern_realms', img: 'cards/bronibor.jpg',
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'soldier_token', 3) } ] },
+  // Play: with 2+ Orders used this turn, discard the highest card(s) in play
+  // (both boards, himself included if tied); otherwise a targeted 3 damage.
+  // See dethmoldDiscardActive()/resolveDethmoldDiscard().
+  dethmold:          { id: 'dethmold', name: 'Dethmold', power: 3, tier: 'silver', faction: 'northern_realms', img: 'cards/dethmold.jpg',
+                       abilities: [], playTargetDamage: 3, playDiscardHighestIfOrders: 2 },
+  foltests_pride:    { id: 'foltests_pride', name: "Foltest's Pride", power: 3, tier: 'silver', faction: 'northern_realms', img: 'cards/foltests_pride.jpg',
+                       refreshOnSecondOrder: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
+  // Play AND Order: like Blue Stripes Scout, but Scouts are valid targets.
+  odrin:             { id: 'odrin', name: 'Odrin', power: 4, tier: 'silver', faction: 'northern_realms', img: 'cards/odrin.jpg',
+                       refreshAllowsScouts: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isRefresh: true,
+                                      validTargets: (side, card) => scoutRefreshTargets(side, card),
+                                      effect: (ctx, target) => { refreshOrder(target); logMsg(`${target.name}'s Order is refreshed.`); } } ],
+                       playRefreshOrder: true },
+  prince_stennis:    { id: 'prince_stennis', name: 'Prince Stennis', power: 4, tier: 'silver', faction: 'northern_realms', img: 'cards/prince_stennis.jpg',
+                       buffOnSecondOrder: 2, abilities: [] },
+  // Passive: from its owner's discard pile, returns itself to the board on
+  // their exactly-2nd Order of a turn (see triggerSecondOrderDiscardReturns).
+  ronvid:            { id: 'ronvid', name: 'Ronvid of the Small Marsh', power: 2, tier: 'silver', faction: 'northern_realms', img: 'cards/ronvid.jpg',
+                       returnOnSecondOrder: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Order: 2 damage, or 4 if its owner already used another Order this turn.
+  seltkirk:          { id: 'seltkirk', name: 'Seltkirk of Gulet', power: 4, tier: 'silver', faction: 'northern_realms', img: 'cards/seltkirk.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2,
+                                      amountFn: (side) => ordersUsedThisTurn(side) >= 1 ? 4 : 2,
+                                      effect: (ctx, target) => applyDamage(target, ctx.amount) } ] },
+  ves:               { id: 'ves', name: 'Ves', power: 3, tier: 'silver', faction: 'northern_realms', img: 'cards/ves.jpg', playTargetDamage: 2,
+                       abilities: [ { trigger: 'order', needsTarget: false, effect: (ctx) => createTokensRightOf(ctx.side, ctx.card, 'soldier_token', 1) } ] },
+  // Play: play a Bronze card from your discard pile; its Order (if any) may
+  // be used this very turn. Reusable picker/AI logic: see
+  // handleDiscardChoiceThenEndTurn (discardFilter / reviveOrderUsableNow).
+  vysogota:          { id: 'vysogota', name: 'Vysogota of Corvo', power: 2, tier: 'silver', faction: 'northern_realms', img: 'cards/vysogota.jpg', abilities: [],
+                       discardChoice: 'bronze', discardFilter: c => isReviveEligibleBronze(c), reviveOrderUsableNow: true },
+
   // Token: never in random decks or the Card Library, and it vanishes when
   // it leaves the board (never reaches a discard pile) -- see sendToGraveyard.
   soldier_token:     { id: 'soldier_token', name: 'Soldier', power: 1, tier: 'token', faction: 'northern_realms', img: 'cards/soldier_token.jpg',
@@ -2138,8 +2177,13 @@ const CARD_VOICE_LINES = {
 // Set briefly by a deferred voice line (Yennefer) so the card she revives
 // waits for her line to finish before speaking its own.
 let pendingVoiceLineGate = null;
-function playCardVoiceLine(card) {
-  const lines = CARD_VOICE_LINES[card.id];
+// Lines that only play on one specific path, never on a normal play (so
+// they're deliberately NOT in CARD_VOICE_LINES): Ronvid's self-return.
+const RONVID_RETURN_LINE = { url: 'sfx/ronvid_line_1.mp3', text: "For Maid Bilberry's honor!" };
+// forcedLine (optional): play this exact line instead of a random one from
+// CARD_VOICE_LINES.
+function playCardVoiceLine(card, forcedLine) {
+  const lines = forcedLine ? [forcedLine] : CARD_VOICE_LINES[card.id];
   if (!lines) return Promise.resolve();
   let resolveDone;
   const donePromise = new Promise(r => { resolveDone = r; });
@@ -2527,7 +2571,111 @@ function noteOrderUsed(side) {
       applyPowerDelta(c, c.buffOnSecondOrder);
       logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name} gains ${c.buffOnSecondOrder} power.`);
     });
+    triggerSecondOrderDiscardReturns(side);
   }
+}
+
+/* Ronvid of the Small Marsh: while in its owner's discard pile, their
+   exactly-2nd Order of a turn plays it back onto the board (free play,
+   normal discard-to-board flight). noteOrderUsed runs right after the
+   triggering Order's own effect is applied, so the return is started a
+   short beat later -- after that Order has resolved. Holds off ending the
+   turn (pendingPlayTokenSpawns) until it has landed. Voice line on this
+   path only. Repeatable across the game. */
+function triggerSecondOrderDiscardReturns(side) {
+  const p = state.players[side];
+  const returning = p.graveyard.filter(c => c.returnOnSecondOrder);
+  if (returning.length === 0) return;
+  returning.forEach(c => {
+    pendingPlayTokenSpawns++;
+    setTimeout(async () => {
+      try {
+        if (!state || state.phase !== 'playing' || !p.graveyard.some(g => g.uid === c.uid)) return;
+        logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name} returns from the discard pile!`);
+        const landed = playFreeCardWithAnimation(side, c.uid);
+        playCardVoiceLine(c, RONVID_RETURN_LINE);
+        await landed;
+      } finally {
+        pendingPlayTokenSpawns--;
+        render();
+        if (side === 'player') maybeAutoEndTurn('player');
+      }
+    }, 250);
+  });
+}
+
+/* Effective damage of a damage Order at this moment (Seltkirk: 2, or 4 once
+   its owner has already used another Order this turn). */
+function orderDamageAmount(side, card, ability) {
+  ability = ability || findOrderAbility(card);
+  if (!ability) return 0;
+  return ability.amountFn ? ability.amountFn(side, card) : (ability.amount || 0);
+}
+
+/* Vysogota (and later Nenneke): a Bronze, non-token, non-special card whose
+   printed power is at least 1. */
+function isReviveEligibleBronze(c) {
+  const base = c.basePower !== undefined ? c.basePower : c.power;
+  return c.tier === 'bronze' && !c.special && base >= 1;
+}
+// AI's pick for such a revive: prefer a card whose Order would be usable
+// right away -- a damage Order with a kill available first -- then power.
+function aiPickReviveTarget(side, candidates) {
+  const enemy = state.players[otherSide(side)].board;
+  const score = c => {
+    const a = findOrderAbility(c);
+    let s = c.power;
+    if (a) {
+      if (a.isDamage) s += enemy.some(e => e.power > 0 && e.power <= orderDamageAmount(side, c, a)) ? 100 : 20;
+      else if (a.isRefresh) s += scoutRefreshTargets(side, c).length > 0 ? 30 : 0;
+      else s += 25;
+    }
+    return s;
+  };
+  return candidates.slice().sort((a, b) => score(b) - score(a))[0] || null;
+}
+
+/* Dethmold: the discard branch applies once its owner has used 2+ Orders
+   this turn (checked when its Play resolves). */
+function dethmoldDiscardActive(side, card) {
+  return !!card.playDiscardHighestIfOrders && ordersUsedThisTurn(side) >= card.playDiscardHighestIfOrders;
+}
+// Every card in play (both boards, Dethmold himself included) tied for the
+// highest current power.
+function highestCardsInPlay() {
+  const all = [...state.players.player.board, ...state.players.ai.board].filter(c => !c.floatingSpecial && c.power > 0);
+  if (all.length === 0) return [];
+  const max = Math.max(...all.map(c => c.power));
+  return all.filter(c => c.power === max);
+}
+// AI: is the discard branch net-favorable right now? `hypothetical` is the
+// Dethmold card still in hand (counted at its power, as it'd be in play).
+function aiDethmoldDiscardFavorable(hypothetical) {
+  const all = [...state.players.player.board.map(c => ({ c, own: false })),
+               ...state.players.ai.board.map(c => ({ c, own: true }))];
+  if (hypothetical && !state.players.ai.board.some(c => c.uid === hypothetical.uid)) all.push({ c: hypothetical, own: true });
+  const alive = all.filter(x => x.c.power > 0);
+  if (alive.length === 0) return false;
+  const max = Math.max(...alive.map(x => x.c.power));
+  const hit = alive.filter(x => x.c.power === max);
+  const enemyValue = hit.filter(x => !x.own).reduce((s, x) => s + x.c.power, 0);
+  const ownValue = hit.filter(x => x.own).reduce((s, x) => s + x.c.power, 0);
+  return enemyValue > ownValue;
+}
+function resolveDethmoldDiscard(side, card, onDone) {
+  pendingPlayTokenSpawns++; // hold the turn open until the discards finish
+  const done = () => { pendingPlayTokenSpawns--; if (onDone) onDone(); };
+  setTimeout(() => {
+    const targets = highestCardsInPlay();
+    if (targets.length === 0) { done(); return; }
+    logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} discards ${targets.map(t => t.name).join(', ')} (${targets[0].power} power).`);
+    let remaining = targets.length;
+    targets.forEach(t => killCardFromBoard(t, {}, () => {
+      remaining--;
+      if (remaining === 0) { render(); done(); }
+    }));
+    render();
+  }, 400);
 }
 
 /* Temerian Drummer: its Order refreshes whenever its owner puts a card with
@@ -2657,9 +2805,10 @@ function resolveSiegeTower(side, card) {
 
 // Blue Stripes Scout's valid refresh targets: another card on its owner's
 // board, bronze or token, whose Order has been used -- never a Scout.
+// Odrin (refreshAllowsScouts) uses the same rule minus the no-Scout clause.
 function scoutRefreshTargets(side, scout) {
   return state.players[side].board.filter(c =>
-    c.uid !== scout.uid && c.id !== 'blue_stripes_scout' &&
+    c.uid !== scout.uid && (scout.refreshAllowsScouts || c.id !== 'blue_stripes_scout') &&
     (c.tier === 'bronze' || c.tier === 'token') &&
     findOrderAbility(c) && c.orderUsed);
 }
@@ -2671,7 +2820,7 @@ function aiPickScoutTarget(scout) {
   const enemy = state.players.player.board;
   const score = c => {
     const a = findOrderAbility(c);
-    if (a.isDamage) return (enemy.some(e => e.power <= a.amount) ? 100 : 10) + (a.amount || 0);
+    if (a.isDamage) { const amt = orderDamageAmount('ai', c, a); return (enemy.some(e => e.power > 0 && e.power <= amt) ? 100 : 10) + amt; }
     return 5;
   };
   return targets.slice().sort((a, b) => score(b) - score(a))[0];
@@ -3420,29 +3569,43 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo, sourceCard
     render();
     if (side === 'player') maybeAutoEndTurn('player');
   };
-  const eligible = state.players[side].graveyard.filter(c => c.tier === tier);
+  const filterFn = (sourceCard && sourceCard.discardFilter) || (() => true);
+  const eligible = state.players[side].graveyard.filter(c => c.tier === tier && filterFn(c));
+  // Vysogota: the revived card's Order may be used this very turn.
+  const allowOrderNow = (uid) => {
+    if (!sourceCard || !sourceCard.reviveOrderUsableNow) return;
+    const revived = state.players[side].board.find(c => c.uid === uid);
+    if (revived && findOrderAbility(revived)) {
+      revived.playedTurn = state.turnCounter - 1;
+      logMsg(`${revived.name}'s Order can be used this turn.`);
+    }
+  };
   if (eligible.length === 0) {
     logMsg(`${side === 'player' ? 'You have' : 'Opponent has'} no ${tier} cards in the discard pile to play.`);
     playDeferredVoice(null); // ability fizzled -- speak right away
     finish();
     return;
   } else if (side === 'player') {
-    const chosen = await chooseCardFromDiscard('player', c => c.tier === tier, `Pick a ${tier} card from the discard pile, or skip.`);
+    const chosen = await chooseCardFromDiscard('player', c => c.tier === tier && filterFn(c), `Pick a ${tier} card from the discard pile, or skip.`);
     playDeferredVoice(chosen); // at the Select click (or picker close on skip)
     if (chosen) {
       if (chosen.special) {
         await playFreeSpecialCardWithAnimation('player', chosen.uid);
       } else {
         await playFreeCardWithAnimation('player', chosen.uid);
+        allowOrderNow(chosen.uid);
       }
     }
   } else {
-    const best = eligible.slice().sort((a, b) => b.power - a.power)[0];
+    const best = (sourceCard && sourceCard.reviveOrderUsableNow)
+      ? aiPickReviveTarget(side, eligible)
+      : eligible.slice().sort((a, b) => b.power - a.power)[0];
     playDeferredVoice(best); // at the AI's choice, before its card flies in
     if (best.special) {
       await playFreeSpecialCardWithAnimation('ai', best.uid);
     } else {
       await playFreeCardWithAnimation('ai', best.uid);
+      allowOrderNow(best.uid);
     }
   }
   pendingVoiceLineGate = null; // never leak into an unrelated later revive
@@ -3778,7 +3941,7 @@ async function aiUseAvailableOrders() {
       // expected/fine outcome, not a bug, even if one never does).
       const enemyBoard = state.players.player.board;
       // (skip cards already at 0 -- killed a moment ago, still mid death animation)
-      const killable = enemyBoard.filter(c => c.power > 0 && c.power <= ability.amount);
+      const killable = enemyBoard.filter(c => c.power > 0 && c.power <= orderDamageAmount('ai', readyCard, ability));
       if (killable.length === 0) {
         heldBack.add(readyCard.uid);
         continue;
@@ -3789,7 +3952,7 @@ async function aiUseAvailableOrders() {
       // actually get used -- a buff, or a damage Order with a kill available.
       target = aiPickScoutTarget(readyCard);
       const ta = target && findOrderAbility(target);
-      const useful = ta && (!ta.isDamage || state.players.player.board.some(e => e.power > 0 && e.power <= ta.amount));
+      const useful = ta && (!ta.isDamage || state.players.player.board.some(e => e.power > 0 && e.power <= orderDamageAmount('ai', target, ta)));
       if (!useful) { heldBack.add(readyCard.uid); continue; }
     } else if (ability.needsTarget) {
       // buffs a chosen ally (e.g. Zoltan Chivay, Kaedweni Cavalry) -- pick
@@ -3895,7 +4058,10 @@ async function aiTakeTurn() {
       await delay(400);
       await startScoutRefresh('ai', cardData, null);
     }
-    if (cardData.playTargetDamage) {
+    if (dethmoldDiscardActive('ai', cardData)) {
+      await new Promise(resolve => resolveDethmoldDiscard('ai', cardData, resolve));
+      render();
+    } else if (cardData.playTargetDamage) {
       const enemyBoard = state.players.player.board;
       const amount = effectivePlayDamage('ai', cardData);
       // Only worth using if there's an actual enemy card to hit -- never
@@ -4343,6 +4509,8 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
     startDeckTopDamage(side, card, notifyInfo, onDone);
   } else if (card.playRefreshOrder) {
     startScoutRefresh(side, card, notifyInfo, onDone);
+  } else if (dethmoldDiscardActive(side, card)) {
+    resolveDethmoldDiscard(side, card, finish);
   } else if (card.playTargetDamage) {
     const amount = effectivePlayDamage(side, card);
     if (side === 'player') {
@@ -4423,6 +4591,9 @@ function decideAiAction() {
   // Siege Tower discards itself unless 2+ Orders were used this turn -- never
   // play it into that (unless it's all that's left).
   if (ordersUsedThisTurn('ai') < 2) usableHand = usableHand.filter(c => c.id !== 'siege_tower');
+  // Dethmold with 2+ Orders used discards the highest card(s) in play --
+  // only play him into that when it hits more enemy value than own.
+  usableHand = usableHand.filter(c => !dethmoldDiscardActive('ai', c) || aiDethmoldDiscardFavorable(c));
   const hand = usableHand.length > 0 ? usableHand : ai.hand;
 
   const sorted = [...hand].sort((a, b) => a.power - b.power);
@@ -5042,6 +5213,10 @@ function cancelTargeting() {
 // apply once it lands; other Orders (buffs, etc.) resolve immediately.
 // onDone (optional) fires once the ability has actually been applied.
 function applyOrderAbility(side, card, ability, target, onDone) {
+  // Damage amount fixed at activation time (Seltkirk's depends on Orders
+  // already used this turn -- counted before this one).
+  const orderCtx = () => Object.assign(makeCtx(side, card), { amount: orderDamageAmount(side, card, ability) });
+  const ctxAtActivation = orderCtx();
   const finish = () => {
     card.orderUsed = true;
     state.players[side].orderUsedThisTurn = true;
@@ -5052,23 +5227,23 @@ function applyOrderAbility(side, card, ability, target, onDone) {
   };
   if (ability.isDamage && target.uid !== card.uid) {
     shootProjectile(card.uid, target.uid, () => {
-      ability.effect(makeCtx(side, card), target);
+      ability.effect(ctxAtActivation, target);
       finish();
     });
   } else if (!ability.isDamage && target.uid !== card.uid) {
     // a buff Order aimed at another card -- send a green buff projectile
     // over to it first, then apply the boost once it lands
     shootProjectile(card.uid, target.uid, () => {
-      ability.effect(makeCtx(side, card), target);
+      ability.effect(ctxAtActivation, target);
       finish();
     }, 'buff');
   } else if (!ability.isDamage) {
     // a self-buff (e.g. Angoulême) -- no projectile needed, just the sound
-    ability.effect(makeCtx(side, card), target);
+    ability.effect(ctxAtActivation, target);
     SFX.buff();
     finish();
   } else {
-    ability.effect(makeCtx(side, card), target);
+    ability.effect(ctxAtActivation, target);
     finish();
   }
 }
@@ -5586,6 +5761,12 @@ function continueAfterPlayerPlay(playedCard, played) {
       startDeckTopDamage('player', playedCard, notifyInfo);
     } else if (playedCard && playedCard.playRefreshOrder) {
       startScoutRefresh('player', playedCard, notifyInfo);
+    } else if (playedCard && dethmoldDiscardActive('player', playedCard)) {
+      resolveDethmoldDiscard('player', playedCard, () => {
+        if (notifyInfo) notifyAllyPlay('player', notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+        render();
+        maybeAutoEndTurn('player');
+      });
     } else if (playedCard && playedCard.playTargetDamage) {
       startTargeting({ side: 'player', card: playedCard, kind: 'playDamage', amount: effectivePlayDamage('player', playedCard), notifyInfo });
     } else if (playedCard && playedCard.playTargetRemoveBuffs) {

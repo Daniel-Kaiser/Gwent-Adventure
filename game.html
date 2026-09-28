@@ -1869,7 +1869,7 @@ const CARD_DB = {
   // Play: Look at the top card of your deck. Deal damage equal to its power.
   // (see startDeckTopDamage -- reveals the top card beside its owner's deck
   // pile during targeting; the card stays on top of the deck)
-  maxii_van_dekkar:  { id: 'maxii_van_dekkar', name: 'Maxii van Dekkar', power: 2, tier: 'silver', img: 'cards/maxii_van_dekkar.jpg', abilities: [],
+  maxii_van_dekkar:  { id: 'maxii_van_dekkar', name: 'Maxii van Dekkar', power: 3, tier: 'silver', img: 'cards/maxii_van_dekkar.jpg', abilities: [],
                        playDamageFromDeckTop: true },
   renfri:            { id: 'renfri', name: 'Renfri', power: 3, tier: 'silver', img: 'cards/renfri.jpg', abilities: [], playTargetDamage: 3 },
   falibor:           { id: 'falibor', name: 'Falibor', power: 4, tier: 'silver', img: 'cards/falibor.jpg',
@@ -1921,6 +1921,14 @@ const CARD_DB = {
                        buffOnSecondOrder: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
   /* ---- Northern Realms silvers ---- */
+  // Order: play a Bronze unit (non-token, non-special, printed power >= 1)
+  // from its owner's discard pile, same picker/AI pick as Vysogota; the
+  // revived card's Order may be used this turn. Not ready while nothing in
+  // the discard pile qualifies (validTargets).
+  nenneke:           { id: 'nenneke', name: 'Nenneke', power: 3, tier: 'silver', faction: 'northern_realms', img: 'cards/nenneke.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze',
+                                      filter: c => isReviveEligibleBronze(c), reviveOrderUsableNow: true,
+                                      validTargets: (side) => state.players[side].graveyard.filter(c => c.tier === 'bronze' && isReviveEligibleBronze(c)) } ] },
   // Play: 3 Soldier tokens to its right (after it lands, like Sergeant/PFI).
   bronibor:          { id: 'bronibor', name: 'Bronibor', power: 2, tier: 'silver', faction: 'northern_realms', img: 'cards/bronibor.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'soldier_token', 3) } ] },
@@ -2624,6 +2632,14 @@ function orderDamageAmount(side, card, ability) {
 
 /* Vysogota (and later Nenneke): a Bronze, non-token, non-special card whose
    printed power is at least 1. */
+// Vysogota / Nenneke: the revived card's Order may be used this very turn.
+function allowReviveOrderNow(side, uid) {
+  const revived = state.players[side].board.find(c => c.uid === uid);
+  if (revived && findOrderAbility(revived)) {
+    revived.playedTurn = state.turnCounter - 1;
+    logMsg(`${revived.name}'s Order can be used this turn.`);
+  }
+}
 function isReviveEligibleBronze(c) {
   const base = c.basePower !== undefined ? c.basePower : c.power;
   return c.tier === 'bronze' && !c.special && base >= 1;
@@ -3584,11 +3600,7 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo, sourceCard
   // Vysogota: the revived card's Order may be used this very turn.
   const allowOrderNow = (uid) => {
     if (!sourceCard || !sourceCard.reviveOrderUsableNow) return;
-    const revived = state.players[side].board.find(c => c.uid === uid);
-    if (revived && findOrderAbility(revived)) {
-      revived.playedTurn = state.turnCounter - 1;
-      logMsg(`${revived.name}'s Order can be used this turn.`);
-    }
+    allowReviveOrderNow(side, uid);
   };
   if (eligible.length === 0) {
     logMsg(`${side === 'player' ? 'You have' : 'Opponent has'} no ${tier} cards in the discard pile to play.`);
@@ -3902,13 +3914,184 @@ function flyRoundEndCards(flights) {
 // strongest board card (or finish off a weak enemy one, for damage Orders).
 // Runs each one in sequence with a short pause in between, so the player
 // can actually follow what's happening.
-async function aiUseAvailableOrders() {
+/* ---- AI planning helpers (normal games only; the tutorial's scripted AI
+   never reaches aiUseAvailableOrders) ---- */
+
+// Rough value of reaching the AI's exactly-2nd Order this turn: Temerian
+// Infantry / Prince Stennis +2 each, a Battering Ram / Foltest's Pride
+// refresh, Ronvid returning from the discard pile, Siege Tower surviving,
+// a favorable Dethmold discard, Seltkirk's 2 -> 4 upgrade.
+function aiSecondOrderTriggerValue() {
+  const ai = state.players.ai;
+  if (ordersUsedThisTurn('ai') >= 2) return 0;
+  let v = 0;
+  ai.board.forEach(c => {
+    if (c.buffOnSecondOrder) v += c.buffOnSecondOrder;
+    if (c.refreshOnSecondOrder && (c.orderUsed || isOrderReady('ai', c))) v += 1.5;
+    if (c.id === 'seltkirk' && isOrderReady('ai', c)) v += 1;
+  });
+  if (ai.graveyard.some(c => c.returnOnSecondOrder)) v += 3;
+  if (ai.hand.some(c => c.id === 'siege_tower')) v += 4;
+  if (ai.hand.some(c => c.playDiscardHighestIfOrders && aiDethmoldDiscardFavorable(c))) v += 3;
+  return v;
+}
+// Should the AI spend an Order it would otherwise hold (a damage Order with
+// no kill, a Scout refresh with nothing great to refresh) just to reach its
+// 2nd Order of the turn? `readyCount` counts the ready Orders still
+// available, including the one being considered.
+function aiWantsSecondOrder(readyCount) {
+  const used = ordersUsedThisTurn('ai');
+  if (used >= 2) return false;
+  if (used + readyCount < 2) return false;
+  return aiSecondOrderTriggerValue() >= 2;
+}
+
+// Damage a hand card would deal on Play with `ordersUsed` Orders used this
+// turn before it (0 = no damage). Maxii: the AI knows its own top card.
+function aiPlayDamageFor(card, ordersUsed) {
+  if (card.special) return 0;
+  if (card.playDiscardHighestIfOrders && ordersUsed >= card.playDiscardHighestIfOrders) return 0; // Dethmold's discard branch
+  if (card.playDamageFromDeckTop) {
+    const deck = state.players.ai.deck;
+    const top = deck[deck.length - 1];
+    return top ? Math.max(0, top.power) : 0;
+  }
+  if (!card.playTargetDamage) return 0;
+  return card.playTargetDamage + (card.playDamagePlusOrdersUsed ? ordersUsed : 0);
+}
+
+/* Combined-damage kill planner. Looks at every subset of the AI's ready
+   damage Orders (plus optionally ONE hand card with Play damage, played
+   after the Orders) and finds the most valuable single enemy card it can
+   finish off THIS turn -- partial damage heals at end of turn, so only
+   plans that complete the kill count. Models:
+   - Seltkirk used last among the Orders: 4 if any Order precedes it, else 2
+   - Battering Ram / Foltest's Pride (refreshOnSecondOrder): if the subset
+     reaches the 2nd Order, each one in it gets one extra use
+   - Blue Stripes Commando: 1 + Orders used before it; Dethmold: 3 only while
+     fewer than 2 Orders are used (else its discard branch applies); Maxii:
+     the power of the AI's own top deck card.
+   Score = target power (+3 if it still has an unused Order) + the value of
+   hitting the 2nd-Order trigger, minus a small cost per source and per
+   point of overkill, so a cheaper combo wins over a wasteful one. */
+function aiPlanComboKill() {
+  const ai = state.players.ai;
+  if (ai.hand.length === 0) return null;
+  const enemies = state.players.player.board.filter(c => c.power > 0);
+  if (enemies.length === 0) return null;
+  const prior = ordersUsedThisTurn('ai');
+  const sources = ai.board.filter(c => {
+    if (!isOrderReady('ai', c)) return false;
+    const a = findOrderAbility(c);
+    return a && a.isDamage;
+  }).slice(0, 10);
+  if (sources.length === 0) return null;
+  const playOptions = [null, ...ai.hand.filter(c => aiPlayDamageFor(c, 0) > 0 || c.playDamagePlusOrdersUsed || c.playDamageFromDeckTop)];
+  const trigValue = aiSecondOrderTriggerValue();
+
+  let best = null;
+  const nSubsets = 1 << sources.length;
+  for (let mask = 1; mask < nSubsets; mask++) {
+    const subset = sources.filter((_, i) => mask & (1 << i));
+    const k = subset.length;
+    const reachesSecond = prior + k >= 2 && prior < 2;
+    let orders = 0, dmg = 0, seltCount = 0;
+    subset.forEach(c => {
+      const a = findOrderAbility(c);
+      if (c.id === 'seltkirk') { seltCount++; return; } // resolved last, below
+      const uses = (c.refreshOnSecondOrder && reachesSecond) ? 2 : 1;
+      orders += uses;
+      dmg += uses * (a.amountFn ? a.amountFn('ai', c) : (a.amount || 0));
+    });
+    for (let i = 0; i < seltCount; i++) {
+      dmg += (prior + orders) >= 1 ? 4 : 2;
+      orders++;
+    }
+    const totalOrders = prior + orders;
+    for (const play of playOptions) {
+      const pd = play ? aiPlayDamageFor(play, totalOrders) : 0;
+      if (play && pd <= 0) continue;
+      const total = dmg + pd;
+      for (const t of enemies) {
+        if (t.power > total) continue;
+        const value = t.power + (findOrderAbility(t) && !t.orderUsed ? 3 : 0);
+        const nSources = k + (play ? 1 : 0);
+        const score = value + (reachesSecond ? trigValue : 0) - 0.5 * nSources - 0.05 * (total - t.power);
+        if (!best || score > best.score) {
+          best = { score, targetUid: t.uid, orderUids: subset.map(c => c.uid), playUid: play ? play.uid : null, total, targetPower: t.power };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+// Which ready Order the AI fires next: Battering Ram / Foltest's Pride
+// first (they only refresh on the 2nd Order if already used by then), and
+// never Seltkirk while another ready Order could go first (he hits for 4
+// once one precedes him).
+function aiPickNextOrderCard(candidates) {
+  if (candidates.length === 0) return null;
+  const rank = c => c.refreshOnSecondOrder ? 0 : (c.id === 'seltkirk' ? 2 : 1);
+  return candidates.slice().sort((a, b) => rank(a) - rank(b))[0];
+}
+
+async function aiExecuteComboPlan(plan) {
+  const ai = state.players.ai;
+  const planned = new Set(plan.orderUids);
+  const targetAlive = () => {
+    const t = state.players.player.board.find(c => c.uid === plan.targetUid);
+    return t && t.power > 0 ? t : null;
+  };
+  let guard = 0;
+  while (guard++ < 20 && ai.hand.length > 0) {
+    const target = targetAlive();
+    if (!target) break;
+    const ready = ai.board.filter(c => planned.has(c.uid) && isOrderReady('ai', c));
+    const card = aiPickNextOrderCard(ready);
+    if (!card) break;
+    const ability = findOrderAbility(card);
+    await new Promise(resolve => applyOrderAbility('ai', card, ability, target, resolve));
+    render();
+    await delay(500);
+  }
+  // still alive -> the planned Play-damage card finishes it (see decideAiAction
+  // and pickKillableOrBestDamageTarget)
+  if (targetAlive() && plan.playUid && ai.hand.some(c => c.uid === plan.playUid)) {
+    state.aiComboPlan = { playUid: plan.playUid, targetUid: plan.targetUid };
+  }
+}
+
+// Leading by 6+ at the start of its turn, the AI sometimes just passes to
+// save cards: 15% at a 6-point lead rising along a smoothstep curve to 90%
+// at 15+. Never while the player already has a round win (or in the final
+// round), never once the player has passed (decideAiAction handles that).
+function aiPassWhenAheadProbability(lead) {
+  if (lead < 6) return 0;
+  const t = Math.min(1, (lead - 6) / 9);
+  return 0.15 + 0.75 * t * t * (3 - 2 * t);
+}
+function aiShouldPassWhenAhead() {
+  const ai = state.players.ai, opp = state.players.player;
+  if (opp.passed || ai.passed || ai.hand.length === 0) return false;
+  if (state.round >= 3) return false;
+  if (state.roundScores.some(r => r.winner === 'player')) return false;
+  const lead = totalPower('ai') - totalPower('player');
+  return Math.random() < aiPassWhenAheadProbability(lead);
+}
+
+async function aiUseAvailableOrders(opts) {
+  opts = opts || {};
   const ai = state.players.ai;
   if (state.players.player.passed && totalPower('ai') > totalPower('player')) {
     // The player has locked in and the AI is already ahead -- no reason to
     // burn Order abilities (and reveal more information/resources) padding
     // a lead that's already secured.
     return;
+  }
+  if (opts.plan) {
+    const plan = aiPlanComboKill();
+    if (plan) await aiExecuteComboPlan(plan);
   }
   let guard = 0;
   // Orders the AI has decided aren't worth using this turn (no valid target,
@@ -3917,7 +4100,8 @@ async function aiUseAvailableOrders() {
   const heldBack = new Set();
   while (guard++ < 20) {
     if (ai.hand.length === 0) break;
-    const readyCard = ai.board.find(c => isOrderReady('ai', c) && !heldBack.has(c.uid));
+    const readyAll = ai.board.filter(c => isOrderReady('ai', c) && !heldBack.has(c.uid));
+    const readyCard = aiPickNextOrderCard(readyAll);
     if (!readyCard) break;
     const ability = findOrderAbility(readyCard);
 
@@ -3930,40 +4114,49 @@ async function aiUseAvailableOrders() {
         heldBack.add(readyCard.uid);
         continue;
       }
-      const best = eligible.slice().sort((a, b) => b.power - a.power)[0];
-      playFreeCardWithAnimation('ai', best.uid);
+      const best = ability.reviveOrderUsableNow
+        ? aiPickReviveTarget('ai', eligible)
+        : eligible.slice().sort((a, b) => b.power - a.power)[0];
+      const landed = playFreeCardWithAnimation('ai', best.uid);
+      if (ability.reviveOrderUsableNow) allowReviveOrderNow('ai', best.uid);
       readyCard.orderUsed = true;
       ai.orderUsedThisTurn = true;
       noteOrderUsed('ai');
       logMsg(`Opponent activates ${readyCard.name}'s Order.`);
       render();
+      if (ability.reviveOrderUsableNow) await landed;
       await delay(500);
       continue;
     }
 
     let target;
     if (ability.isDamage) {
-      // Only ever spend a damage Order on a target it can actually finish
-      // off outright: non-lethal damage fully heals back at the end of the
-      // turn (see healTemporaryDamage), so hitting a card that survives
-      // accomplishes nothing permanent -- it's strictly better to hold the
-      // Order for a future turn once a killable target appears (that's the
-      // expected/fine outcome, not a bug, even if one never does).
+      // Normally only spend a damage Order on a target it can finish off
+      // outright: non-lethal damage heals back at the end of the turn (see
+      // healTemporaryDamage). Exception: when using it gets the AI to its
+      // 2nd Order of the turn and that trigger is worth it (Stennis/Infantry
+      // +2, Ram/Foltest refresh, Ronvid return, ...) -- then a non-lethal
+      // hit on the most valuable enemy card (unused Orders first) is fine.
       const enemyBoard = state.players.player.board;
       // (skip cards already at 0 -- killed a moment ago, still mid death animation)
-      const killable = enemyBoard.filter(c => c.power > 0 && c.power <= orderDamageAmount('ai', readyCard, ability));
-      if (killable.length === 0) {
+      const alive = enemyBoard.filter(c => c.power > 0);
+      const killable = alive.filter(c => c.power <= orderDamageAmount('ai', readyCard, ability));
+      if (killable.length > 0) {
+        target = pickDamageTarget(killable, (a, b) => a.power > b.power);
+      } else if (alive.length > 0 && aiWantsSecondOrder(readyAll.length)) {
+        target = pickDamageTarget(alive, (a, b) => a.power > b.power);
+      } else {
         heldBack.add(readyCard.uid);
         continue;
       }
-      target = pickDamageTarget(killable, (a, b) => a.power < b.power);
     } else if (ability.isRefresh) {
-      // Blue Stripes Scout's Order: only worth it if the refreshed Order would
-      // actually get used -- a buff, or a damage Order with a kill available.
+      // Blue Stripes Scout's / Odrin's Order: worth it if the refreshed Order
+      // would actually get used -- a buff, or a damage Order with a kill
+      // available -- or if it's what reaches a valuable 2nd Order.
       target = aiPickScoutTarget(readyCard);
       const ta = target && findOrderAbility(target);
       const useful = ta && (!ta.isDamage || state.players.player.board.some(e => e.power > 0 && e.power <= orderDamageAmount('ai', target, ta)));
-      if (!useful) { heldBack.add(readyCard.uid); continue; }
+      if (!target || (!useful && !aiWantsSecondOrder(readyAll.length))) { heldBack.add(readyCard.uid); continue; }
     } else if (ability.needsTarget) {
       // buffs a chosen ally (e.g. Zoltan Chivay, Kaedweni Cavalry) -- pick
       // the strongest one (never itself if the ability excludes that)
@@ -3989,8 +4182,18 @@ async function aiTakeTurn() {
   if (state.tutorial && !tutorialHandsOff) { tutorialScriptedAiTurn(); return; }
   const ai = state.players.ai;
   if (ai.passed) { endTurn('ai'); return; }
+  state.aiComboPlan = null;
 
-  await aiUseAvailableOrders();
+  // Comfortably ahead at the start of its turn: sometimes just pass.
+  if (aiShouldPassWhenAhead()) {
+    await delay(500);
+    passTurn('ai');
+    render();
+    playAiPassRing(() => endTurn('ai'));
+    return;
+  }
+
+  await aiUseAvailableOrders({ plan: true });
   render();
   if (ai.orderUsedThisTurn) {
     // a beat between the last Order and whatever comes next (pass/play)
@@ -4127,6 +4330,7 @@ async function aiTakeTurn() {
       await aiUseAvailableOrders();
       render();
     }
+    state.aiComboPlan = null;
     // draw only happens once the turn is actually ending
     setTimeout(() => {
       flyDraw('ai', () => {
@@ -4411,6 +4615,12 @@ function pickDamageTarget(enemyBoard, better) {
 // board can actually be killed by it, this falls back to the previous
 // highest-power-target behavior rather than doing nothing.
 function pickKillableOrBestDamageTarget(enemyBoard, amount) {
+  // The AI's combo plan target, if this hit finishes it.
+  const plan = state && state.aiComboPlan;
+  if (plan) {
+    const t = enemyBoard.find(c => c.uid === plan.targetUid && c.power > 0 && c.power <= amount);
+    if (t) return t;
+  }
   const alive = enemyBoard.filter(c => c.power > 0);
   if (alive.length > 0) enemyBoard = alive;
   const killable = enemyBoard.filter(c => c.power <= amount);
@@ -4588,6 +4798,15 @@ function decideAiAction() {
     return { action: 'pass' };
   }
 
+  // A combo kill plan (aiPlanComboKill) that needs a Play-damage card to
+  // finish its target: play that card now.
+  const plan = state.aiComboPlan;
+  if (plan) {
+    const pc = ai.hand.find(c => c.uid === plan.playUid);
+    const t = state.players.player.board.find(c => c.uid === plan.targetUid && c.power > 0);
+    if (pc && t && aiPlayDamageFor(pc, ordersUsedThisTurn('ai')) >= t.power) return { action: 'play', uid: pc.uid };
+  }
+
   const myPower = totalPower('ai');
   const oppPower = totalPower('player');
   const diff = myPower - oppPower; // positive = AI ahead
@@ -4646,13 +4865,8 @@ function decideAiAction() {
     }
   }
 
-  const comfortableLead = diff >= 6;
-
-  if (comfortableLead && state.round < 3) {
-    if (Math.random() < 0.5) {
-      return { action: 'pass' };
-    }
-  }
+  // (Passing while comfortably ahead is decided at the start of the AI's
+  // turn, before it acts -- see aiShouldPassWhenAhead.)
 
   if (diff < 0) {
     return { action: 'play', uid: strongest.uid };
@@ -5444,6 +5658,7 @@ async function activateDiscardPlayOrder(side, card, ability) {
   const chosen = await chooseCardFromDiscard('player', predicate, `Pick a ${ability.tier} card from the discard pile, or skip.`);
   if (!chosen) return;
   playFreeCardWithAnimation('player', chosen.uid);
+  if (ability.reviveOrderUsableNow) allowReviveOrderNow(side, chosen.uid);
   card.orderUsed = true;
   state.players[side].orderUsedThisTurn = true;
   noteOrderUsed(side);

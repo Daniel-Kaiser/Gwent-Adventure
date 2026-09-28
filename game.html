@@ -232,7 +232,7 @@
   .card .power {
     position: absolute;
     top: 4px;
-    left: 4px;
+    left: 7.5px;
     background: #000a;
     border-radius: 50%;
     width: 24px;
@@ -266,7 +266,7 @@
      for cards whose art doesn't already have a number painted in. */
   .powerOverlay {
     position: absolute;
-    left: 15.5%;
+    left: calc(15.5% + 3.5px); /* nudged 3.5px right of the art's diamond centre */
     top: 12%;
     transform: translate(-50%, -50%);
     width: 34%;
@@ -2034,6 +2034,9 @@ const CARD_VOICE_LINES = {
     { url: 'sfx/villentretenmerth_line_2.mp3', text: '[...]' },
     { url: 'sfx/villentretenmerth_line_3.mp3', text: '[...]' },
   ],
+  roach: [
+    { url: 'sfx/roach_snort.mp3', text: '[...]' },
+  ],
 };
 function playCardVoiceLine(card) {
   const lines = CARD_VOICE_LINES[card.id];
@@ -3045,6 +3048,9 @@ function playCardFromGraveyard(side, uid) {
   // flown from the discard pile and visually landed on the board
   card._isFirstPlayThisTurn = isFirstPlayThisTurn;
   logMsg(`${side === 'player' ? 'You' : 'Opponent'} played ${card.name} (${card.power}) free from the discard pile.`);
+  // Free plays from the discard pile (e.g. Roach's Gold-card passive,
+  // Yennefer/Caretaker returns) get the same voice line as a hand play.
+  if (CARD_VOICE_LINES[card.id]) playCardVoiceLine(card);
   return card;
 }
 

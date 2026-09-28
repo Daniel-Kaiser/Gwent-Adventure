@@ -2677,16 +2677,10 @@ function highestCardsInPlay() {
 // AI: is the discard branch net-favorable right now? `hypothetical` is the
 // Dethmold card still in hand (counted at its power, as it'd be in play).
 function aiDethmoldDiscardFavorable(hypothetical) {
-  const all = [...state.players.player.board.map(c => ({ c, own: false })),
-               ...state.players.ai.board.map(c => ({ c, own: true }))];
-  if (hypothetical && !state.players.ai.board.some(c => c.uid === hypothetical.uid)) all.push({ c: hypothetical, own: true });
-  const alive = all.filter(x => x.c.power > 0);
-  if (alive.length === 0) return false;
-  const max = Math.max(...alive.map(x => x.c.power));
-  const hit = alive.filter(x => x.c.power === max);
-  const enemyValue = hit.filter(x => !x.own).reduce((s, x) => s + x.c.power, 0);
-  const ownValue = hit.filter(x => x.own).reduce((s, x) => s + x.c.power, 0);
-  return enemyValue > ownValue;
+  // Unified with the Scorch evaluation (aiScorchOutcome), assuming the
+  // discard branch is active.
+  const o = aiScorchOutcome(hypothetical, true);
+  return !!o && o.enemy > 0 && o.enemy > o.own;
 }
 function resolveDethmoldDiscard(side, card, onDone) {
   pendingPlayTokenSpawns++; // hold the turn open until the discards finish
@@ -4204,7 +4198,8 @@ async function aiTakeTurn() {
   if (decision.action === 'pass' && ai.orderUsedThisTurn) {
     // having used an Order, the AI can no longer just pass -- it must still
     // play a card (playing a card is the only way to end the turn now)
-    const weakest = ai.hand.slice().sort((a, b) => a.power - b.power)[0];
+    const ok = ai.hand.filter(aiScorchAcceptable);
+    const weakest = ok.length ? ok.slice().sort((a, b) => a.power - b.power)[0] : aiLeastBadCard(ai.hand);
     decision = { action: 'play', uid: weakest.uid };
   }
   if (decision.action === 'pass') {
@@ -4778,16 +4773,51 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
   }
 }
 
-// True when the AI already holds more of the currently-highest-power cards
-// in play than the player does, meaning a Scorch right now would hit more
-// of the AI's own board than the opponent's.
-function aiShouldAvoidScorch() {
-  const allInPlay = [...state.players.ai.board, ...state.players.player.board];
-  if (allInPlay.length === 0) return false;
-  const maxPower = Math.max(...allInPlay.map(c => c.power));
-  const aiCount = state.players.ai.board.filter(c => c.power === maxPower).length;
-  const oppCount = state.players.player.board.filter(c => c.power === maxPower).length;
-  return aiCount > oppCount;
+/* AI: "Scorch-like" cards discard the highest-power card(s) in play, both
+   sides, ties all hit: Scorch, Villentretenmerth, and Dethmold's 2+-Orders
+   discard branch. aiScorchOutcome simulates the discard exactly as the
+   card's resolver would at the moment it resolves and returns
+   { enemy, own } -- the total power the player / the AI would lose -- or
+   null if the card isn't Scorch-like right now. */
+function aiIsScorchLike(card) {
+  return card.id === 'scorch' || card.id === 'villentretenmerth' || dethmoldDiscardActive('ai', card);
+}
+function aiScorchOutcome(card, assumeActive) {
+  if (!assumeActive && !aiIsScorchLike(card)) return null;
+  const all = [...state.players.player.board.map(c => ({ c, own: false })),
+               ...state.players.ai.board.map(c => ({ c, own: true }))];
+  let pool;
+  if (card.id === 'scorch') {
+    // resolveScorch: every card in play except Scorch itself (a special --
+    // it never counts as a target)
+    pool = all.filter(x => x.c.uid !== card.uid);
+  } else {
+    // resolveVillentretenmerth: the card is already on the board when its
+    // Play resolves, so it can catch itself if it's tied highest.
+    // resolveDethmoldDiscard (highestCardsInPlay): same, but only cards
+    // with power > 0 count.
+    pool = all.slice();
+    if (!state.players.ai.board.some(c => c.uid === card.uid)) pool.push({ c: card, own: true });
+    if (card.id !== 'villentretenmerth') pool = pool.filter(x => x.c.power > 0 && !x.c.floatingSpecial);
+  }
+  if (pool.length === 0) return { enemy: 0, own: 0 };
+  const max = Math.max(...pool.map(x => x.c.power));
+  const hit = pool.filter(x => x.c.power === max);
+  return {
+    enemy: hit.filter(x => !x.own).reduce((s, x) => s + x.c.power, 0),
+    own: hit.filter(x => x.own).reduce((s, x) => s + x.c.power, 0),
+  };
+}
+// Worth playing? Non-Scorch-like cards always are; Scorch-like ones only if
+// the discard hits some of the player's power and more of it than the AI's.
+function aiScorchAcceptable(card) {
+  const o = aiScorchOutcome(card);
+  return !o || (o.enemy > 0 && o.enemy > o.own);
+}
+// Last-resort pick among cards that are all unacceptable: best net outcome.
+function aiLeastBadCard(cards) {
+  const net = c => { const o = aiScorchOutcome(c); return o ? o.enemy - o.own : 0; };
+  return cards.slice().sort((a, b) => net(b) - net(a) || a.power - b.power)[0];
 }
 
 function decideAiAction() {
@@ -4816,14 +4846,28 @@ function decideAiAction() {
   // than the player, playing Scorch would burn more of its own board than
   // the opponent's, so it's avoided (falling back to it only if it's the
   // only card left in hand).
-  let usableHand = aiShouldAvoidScorch() ? ai.hand.filter(c => c.id !== 'scorch') : ai.hand;
+  const scorchOk = ai.hand.filter(aiScorchAcceptable);
+  if (scorchOk.length === 0) {
+    // Everything left would only burn the AI's own board (or nothing of
+    // the player's): pass if allowed, else play the least-bad card.
+    if (!ai.orderUsedThisTurn) return { action: 'pass' };
+    return { action: 'play', uid: aiLeastBadCard(ai.hand).uid };
+  }
+  let usableHand = scorchOk;
   // Siege Tower discards itself unless 2+ Orders were used this turn -- never
   // play it into that (unless it's all that's left).
   if (ordersUsedThisTurn('ai') < 2) usableHand = usableHand.filter(c => c.id !== 'siege_tower');
-  // Dethmold with 2+ Orders used discards the highest card(s) in play --
-  // only play him into that when it hits more enemy value than own.
-  usableHand = usableHand.filter(c => !dethmoldDiscardActive('ai', c) || aiDethmoldDiscardFavorable(c));
-  const hand = usableHand.length > 0 ? usableHand : ai.hand;
+  const hand = usableHand.length > 0 ? usableHand : scorchOk;
+
+  // A clearly favorable Scorch-like play (burns 4+ more of the player's
+  // power than the AI's) is worth making now -- unless the player already
+  // passed and the AI is ahead (then it just passes below).
+  if (!(opp.passed && diff > 0)) {
+    const burn = hand.map(c => ({ c, o: aiScorchOutcome(c) }))
+      .filter(x => x.o && x.o.enemy - x.o.own >= 4)
+      .sort((a, b) => (b.o.enemy - b.o.own) - (a.o.enemy - a.o.own))[0];
+    if (burn) return { action: 'play', uid: burn.c.uid };
+  }
 
   const sorted = [...hand].sort((a, b) => a.power - b.power);
   const weakest = sorted[0];

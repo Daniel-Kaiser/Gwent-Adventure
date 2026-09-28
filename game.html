@@ -1744,9 +1744,9 @@ const CARD_DB = {
                        abilities: [ { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 3) } ] },
   highwayman:        { id: 'highwayman', name: 'Highwayman', power: 2, tier: 'bronze', img: 'cards/highwayman.jpg', abilities: [], playTargetDamage: 2 },
   mercenary_mauler:  { id: 'mercenary_mauler', name: 'Mercenary Mauler', power: 1, tier: 'bronze', img: 'cards/mercenary_mauler.jpg',
-                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, effect: (ctx, target) => applyDamage(target, 4) } ] },
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 4, effect: (ctx, target) => applyDamage(target, 4) } ] },
   bomb_heaver:       { id: 'bomb_heaver', name: 'Bomb Heaver', power: 1, tier: 'bronze', img: 'cards/bomb_heaver.jpg', playTargetDamage: 1,
-                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, effect: (ctx, target) => applyDamage(target, 2) } ] },
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
   angry_mob:         { id: 'angry_mob', name: 'Angry Mob', power: 2, tier: 'bronze', img: 'cards/angry_mob.jpg', abilities: [],
                        playTargetRemoveBuffs: true },
   tridam_infantry:   { id: 'tridam_infantry', name: 'Tridam Infantry', power: 2, tier: 'bronze', img: 'cards/tridam_infantry.jpg',
@@ -1783,7 +1783,7 @@ const CARD_DB = {
                        abilities: [ { trigger: 'order', needsTarget: false, effect: (ctx) => applyPowerDelta(ctx.card, 6) } ] },
   renfri:            { id: 'renfri', name: 'Renfri', power: 3, tier: 'silver', img: 'cards/renfri.jpg', abilities: [], playTargetDamage: 3 },
   falibor:           { id: 'falibor', name: 'Falibor', power: 4, tier: 'silver', img: 'cards/falibor.jpg',
-                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, effect: (ctx, target) => applyDamage(target, 2) } ] },
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
 
   villentretenmerth: { id: 'villentretenmerth', name: 'Villentretenmerth', power: 3, tier: 'gold', img: 'cards/villentretenmerth.jpg',
                        abilities: [ { trigger: 'onPlay', effect: resolveVillentretenmerth } ] },
@@ -2596,6 +2596,12 @@ function healTemporaryDamage() {
    each turn (it never counts its own play, since notifyAllyPlay skips the
    just-played card). */
 function buffTridamInfantry(card, info) {
+  // Never trigger on the turn Tridam Infantry itself was played, no matter
+  // how that happens -- a normal hand play, or entering play mid-turn via a
+  // free/discard-return effect (Roach's passive, Yennefer/Caretaker) and
+  // then another card triggering notifyAllyPlay later that same turn. Same
+  // "played on an earlier turn" guard Order abilities use (isOrderReady).
+  if (card.playedTurn === undefined || state.turnCounter <= card.playedTurn) return;
   if (info.isFirstPlayThisTurn) {
     applyPowerDelta(card, 1);
     SFX.buff();
@@ -3343,22 +3349,19 @@ async function aiUseAvailableOrders() {
 
     let target;
     if (ability.isDamage) {
-      // prioritize a card that still has an unused Order (denying a real
-      // threat is always worth it), otherwise only spend the order on a
-      // card sturdy enough to matter -- finishing off a harmless low-power
-      // unit that has no order left just wastes the ability for nothing.
+      // Only ever spend a damage Order on a target it can actually finish
+      // off outright: non-lethal damage fully heals back at the end of the
+      // turn (see healTemporaryDamage), so hitting a card that survives
+      // accomplishes nothing permanent -- it's strictly better to hold the
+      // Order for a future turn once a killable target appears (that's the
+      // expected/fine outcome, not a bug, even if one never does).
       const enemyBoard = state.players.player.board;
-      const withUnusedOrder = enemyBoard.filter(c => findOrderAbility(c) && !c.orderUsed);
-      if (withUnusedOrder.length > 0) {
-        target = pickDamageTarget(enemyBoard, (a, b) => a.power < b.power);
-      } else {
-        const worthwhile = enemyBoard.filter(c => c.power >= 3);
-        if (worthwhile.length === 0) {
-          heldBack.add(readyCard.uid);
-          continue;
-        }
-        target = pickDamageTarget(worthwhile, (a, b) => a.power < b.power);
+      const killable = enemyBoard.filter(c => c.power <= ability.amount);
+      if (killable.length === 0) {
+        heldBack.add(readyCard.uid);
+        continue;
       }
+      target = pickDamageTarget(killable, (a, b) => a.power < b.power);
     } else if (ability.needsTarget) {
       // buffs a chosen ally (e.g. Zoltan Chivay) -- pick the strongest one
       target = ai.board.slice().sort((a, b) => b.power - a.power)[0] || readyCard;
@@ -3458,7 +3461,7 @@ async function aiTakeTurn() {
       if (enemyBoard.length > 0) {
         await delay(500); // a beat after playing the card, before it strikes
         const liveCard = state.players.ai.board.find(c => c.uid === cardData.uid) || cardData;
-        const target = pickDamageTarget(enemyBoard, (a, b) => a.power > b.power);
+        const target = pickKillableOrBestDamageTarget(enemyBoard, cardData.playTargetDamage);
         await new Promise(resolve => {
           applyPlayDamage('ai', liveCard, cardData.playTargetDamage, target, resolve);
         });
@@ -3772,6 +3775,24 @@ function pickDamageTarget(enemyBoard, better) {
   return pool.reduce((best, c) => (!best || better(c, best)) ? c : best, null);
 }
 
+// Picks a target for a mandatory Play-triggered damage effect (e.g.
+// Highwayman/Bomb Heaver/Renfri/Triss on-play, or a free play of one of
+// them from the discard pile) that's actually worth landing: a hit that
+// doesn't kill just heals back at the end of the turn (healTemporaryDamage),
+// so a target that WOULD die outright to this exact amount is always
+// preferred when one exists, over just hitting the highest-power card. The
+// ability still has no way to be skipped once the card is played (there's
+// no "decline to trigger" UI for an on-play effect), so if nothing on the
+// board can actually be killed by it, this falls back to the previous
+// highest-power-target behavior rather than doing nothing.
+function pickKillableOrBestDamageTarget(enemyBoard, amount) {
+  const killable = enemyBoard.filter(c => c.power <= amount);
+  if (killable.length > 0) {
+    return pickDamageTarget(killable, (a, b) => a.power > b.power);
+  }
+  return pickDamageTarget(enemyBoard, (a, b) => a.power > b.power);
+}
+
 // Picks the best target for a "remove all buffs" effect: the enemy's most
 // heavily-buffed card, if any -- there's never a reason to aim it at your
 // own board or at an unbuffed card. Returns null if nothing is worth it.
@@ -3800,7 +3821,7 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
       const enemyBoard = state.players.player.board;
       if (enemyBoard.length === 0) { finish(); return; }
       const liveCard = state.players.ai.board.find(c => c.uid === card.uid) || card;
-      const target = pickDamageTarget(enemyBoard, (a, b) => a.power > b.power);
+      const target = pickKillableOrBestDamageTarget(enemyBoard, card.playTargetDamage);
       applyPlayDamage('ai', liveCard, card.playTargetDamage, target, () => finish());
     }
   } else if (card.playTargetRemoveBuffs) {

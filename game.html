@@ -522,6 +522,26 @@
     100% { clip-path: inset(0 0 0 0); }
   }
 
+  /* An effect refreshed a card's used Order (Scout, Battering Ram,
+     Drummer): a quick green version of the burn fill -- a glow that sweeps
+     up over the card and fades, ~0.2s. A floating overlay pinned over the
+     card (see flashOrderRefresh), so board re-renders can't cut it off. */
+  .orderRefreshFlash {
+    position: fixed;
+    pointer-events: none;
+    z-index: 640;
+    border-radius: 6px;
+    background: linear-gradient(to top, #39ff6ae6 0%, #1fd65599 40%, transparent 78%);
+    mix-blend-mode: screen;
+    box-shadow: 0 0 18px #2dff6a, inset 0 0 14px #7dff9e;
+    animation: orderRefreshRise .2s ease-out forwards;
+  }
+  @keyframes orderRefreshRise {
+    0% { clip-path: inset(100% 0 0 0); opacity: 1; }
+    60% { clip-path: inset(0 0 0 0); opacity: 1; }
+    100% { clip-path: inset(0 0 0 0); opacity: 0; }
+  }
+
   .side .card {
     width: 120px;
     height: 169px;
@@ -2042,6 +2062,9 @@ const SFX = (() => {
   function burn() {
     playClip('sfx/burn.mp3');
   }
+  function orderRefresh() {
+    playClip('sfx/order_refresh.mp3');
+  }
   function impact() {
     const ac = getCtx();
     const t = ac.currentTime;
@@ -2069,7 +2092,7 @@ const SFX = (() => {
   function buttonHover() {
     playClip('sfx/button_hover.mp3', 0.5);
   }
-  return { pickup, place, coinToss, impact, cardDraw, buff, gameOver, roundEnd, burn, buttonHover };
+  return { pickup, place, coinToss, impact, cardDraw, buff, gameOver, roundEnd, burn, orderRefresh, buttonHover };
 })();
 
 /* Certain cards have played-card voice lines -- one random line (per card
@@ -2525,7 +2548,37 @@ function ordersUsedThisTurn(side) {
 /* Makes a used Order usable again. Only clears the "used" flag -- the
    normal "not on the turn it was played" rule (isOrderReady) still applies. */
 function refreshOrder(card) {
+  // No-op refresh (Order wasn't actually used): no sound, no flash.
+  if (!card || !card.orderUsed) return;
   card.orderUsed = false;
+  // One sound per refreshing effect beat: several cards refreshed in the
+  // same tick (e.g. Drummer on multiple allies) share a single clip, but
+  // each card still gets its own green flash.
+  if (!refreshOrder._soundQueued) {
+    refreshOrder._soundQueued = true;
+    setTimeout(() => { refreshOrder._soundQueued = false; SFX.orderRefresh(); }, 0);
+  }
+  flashOrderRefresh(card.uid);
+}
+// Green fill sweep over a card whose Order was just refreshed. Waits a frame
+// so it lands after the render() that usually follows in the same tick, then
+// pins a short-lived overlay over the card's current spot and removes it.
+function flashOrderRefresh(uid) {
+  requestAnimationFrame(() => {
+    const el = document.querySelector(`.side .card[data-uid="${uid}"]`) || document.querySelector(`.card[data-uid="${uid}"]`);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const fx = document.createElement('div');
+    fx.className = 'orderRefreshFlash';
+    fx.dataset.uid = uid;
+    fx.style.left = r.left + 'px';
+    fx.style.top = r.top + 'px';
+    fx.style.width = r.width + 'px';
+    fx.style.height = r.height + 'px';
+    fx.style.borderRadius = getComputedStyle(el).borderRadius;
+    document.body.appendChild(fx);
+    setTimeout(() => fx.remove(), 220);
+  });
 }
 
 /* ---- Tokens ----

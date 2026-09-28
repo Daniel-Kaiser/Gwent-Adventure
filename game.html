@@ -818,6 +818,7 @@
   #overlayBox.gameEndBox .roundScoreLabel { min-width: 140px; }
   #overlayBox.gameEndBox .roundScoreNum { font-size: 30px; }
   #overlayBox.gameEndBox .roundScoreNum.winnerNum { font-size: 40px; }
+  #overlayBox .gameEndButtons { display: flex; gap: 16px; justify-content: center; }
   #overlayBox.gameEndBox button {
     font-size: 28px;
     padding: 20px 40px;
@@ -2038,6 +2039,9 @@ const CARD_VOICE_LINES = {
     { url: 'sfx/roach_snort.mp3', text: '[...]' },
   ],
 };
+// Set briefly by a deferred voice line (Yennefer) so the card she revives
+// waits for her line to finish before speaking its own.
+let pendingVoiceLineGate = null;
 function playCardVoiceLine(card) {
   const lines = CARD_VOICE_LINES[card.id];
   if (!lines) return Promise.resolve();
@@ -3065,7 +3069,11 @@ function playCardFromGraveyard(side, uid) {
   logMsg(`${side === 'player' ? 'You' : 'Opponent'} played ${card.name} (${card.power}) free from the discard pile.`);
   // Free plays from the discard pile (e.g. Roach's Gold-card passive,
   // Yennefer/Caretaker returns) get the same voice line as a hand play.
-  if (CARD_VOICE_LINES[card.id]) card._voicePromise = playCardVoiceLine(card);
+  if (CARD_VOICE_LINES[card.id]) {
+    const gate = pendingVoiceLineGate;
+    if (gate) gate.then(() => playCardVoiceLine(card)); else playCardVoiceLine(card);
+  }
+  pendingVoiceLineGate = null;
   return card;
 }
 
@@ -3080,11 +3088,15 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo, sourceCard
   // ability has fully resolved -- after the pick and the revived card's
   // landing, and after the revived card's own voice line if it has one, so
   // the two never overlap. Fire-and-forget: it doesn't hold up the turn.
-  const playDeferredVoice = (revived) => {
+  // Played the moment the revive choice is made (player's Select click /
+  // AI's pick), before the revived card flies in. If the revived card has
+  // its own voice line, it's queued to start after Yennefer's finishes
+  // (via pendingVoiceLineGate, consumed by playCardFromGraveyard) so the
+  // two never overlap.
+  const playDeferredVoice = (reviving) => {
     if (!sourceCard || !sourceCard.deferVoiceLine || !CARD_VOICE_LINES[sourceCard.id]) return;
-    const before = (revived && revived._voicePromise) || Promise.resolve();
-    if (revived) delete revived._voicePromise;
-    before.then(() => playCardVoiceLine(sourceCard));
+    const p = playCardVoiceLine(sourceCard);
+    if (reviving) pendingVoiceLineGate = p;
   };
   // Allies (e.g. Tridam Infantry) are notified only once the played card's
   // (Yennefer's/Caretaker's) own effect is fully resolved, whatever path that took.
@@ -3101,6 +3113,7 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo, sourceCard
     return;
   } else if (side === 'player') {
     const chosen = await chooseCardFromDiscard('player', c => c.tier === tier, `Pick a ${tier} card from the discard pile, or skip.`);
+    playDeferredVoice(chosen); // at the Select click (or picker close on skip)
     if (chosen) {
       if (chosen.special) {
         await playFreeSpecialCardWithAnimation('player', chosen.uid);
@@ -3108,16 +3121,16 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo, sourceCard
         await playFreeCardWithAnimation('player', chosen.uid);
       }
     }
-    playDeferredVoice(chosen);
   } else {
     const best = eligible.slice().sort((a, b) => b.power - a.power)[0];
+    playDeferredVoice(best); // at the AI's choice, before its card flies in
     if (best.special) {
       await playFreeSpecialCardWithAnimation('ai', best.uid);
     } else {
       await playFreeCardWithAnimation('ai', best.uid);
     }
-    playDeferredVoice(best);
   }
+  pendingVoiceLineGate = null; // never leak into an unrelated later revive
   finish();
 }
 
@@ -5490,8 +5503,12 @@ function showGameEnd() {
     <h2 style="color:${won ? 'var(--good)' : 'var(--bad)'}">${won ? 'VICTORY!' : 'DEFEAT'}</h2>
     <p style="color:var(--muted)">Final score — You: ${state.scores.player} | Opponent: ${state.scores.ai}</p>
     <div class="roundScoreTable">${rows}</div>
-    <button id="playAgainBtn">Play Again</button>
+    <div class="gameEndButtons">
+      <button id="gameEndMainMenuBtn" class="secondary">Back to Main Menu</button>
+      <button id="playAgainBtn">Play Again</button>
+    </div>
   `;
+  document.getElementById('gameEndMainMenuBtn').addEventListener('click', () => exitToMainMenu());
   document.getElementById('playAgainBtn').addEventListener('click', () => {
     // Force a fresh start even though Music thinks it's still "started" --
     // the game-over sting's queued stop() hasn't necessarily fired yet, so

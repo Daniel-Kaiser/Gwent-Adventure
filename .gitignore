@@ -1,0 +1,3 @@
+# Build artifact - regenerate via zip, don't track in git
+card-battle.zip
+*.zip

@@ -1883,9 +1883,9 @@ const CARD_DB = {
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true,
                                       effect: (ctx, target) => { applyPowerDelta(target, 1); createTokensRightOf(ctx.side, ctx.card, 'soldier_token', 1); } } ] },
   kaedweni_sergeant: { id: 'kaedweni_sergeant', name: 'Kaedweni Sergeant', power: 1, tier: 'bronze', faction: 'northern_realms', img: 'cards/kaedweni_sergeant.jpg',
-                       abilities: [ { trigger: 'onPlay', effect: (ctx) => createTokensRightOf(ctx.side, ctx.card, 'soldier_token', 2) } ] },
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'soldier_token', 2) } ] },
   poor_fucking_infantry: { id: 'poor_fucking_infantry', name: 'Poor Fucking Infantry', power: 3, tier: 'bronze', faction: 'northern_realms', img: 'cards/poor_fucking_infantry.jpg',
-                       abilities: [ { trigger: 'onPlay', effect: (ctx) => createTokensRightOf(ctx.side, ctx.card, 'soldier_token', 1) } ] },
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'soldier_token', 1) } ] },
   // Play: if its owner has used fewer than 2 Orders this turn, it's discarded.
   siege_tower:       { id: 'siege_tower', name: 'Siege Tower', power: 6, tier: 'bronze', faction: 'northern_realms', img: 'cards/siege_tower.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => resolveSiegeTower(ctx.side, ctx.card) } ] },
@@ -2540,6 +2540,36 @@ function createToken(id) {
   const base = CARD_DB[id];
   return { ...base, uid: `${id}_tok${tokenUidCounter++}_${Math.random().toString(36).slice(2, 7)}`, basePower: base.power };
 }
+/* Play-effect token spawners (Poor Fucking Infantry, Kaedweni Sergeant)
+   don't create their tokens the instant the card enters play -- the onPlay
+   effect only queues them on the card. Every play path (player drop, AI
+   fly-in, free play from discard) calls resolvePendingPlayTokens once the
+   card has visually landed; the tokens then pop in to its right after a
+   short beat. pendingPlayTokenSpawns > 0 holds off ending the turn (coin,
+   auto-end) until they exist. */
+const PLAY_TOKEN_DELAY_MS = 200;
+let pendingPlayTokenSpawns = 0;
+function queuePlayTokens(card, tokenId, count) {
+  (card._pendingPlayTokens = card._pendingPlayTokens || []).push({ tokenId, count });
+}
+function resolvePendingPlayTokens(side, card, onDone) {
+  const pending = card && card._pendingPlayTokens;
+  if (!pending || pending.length === 0) { if (onDone) onDone(); return; }
+  delete card._pendingPlayTokens;
+  pendingPlayTokenSpawns++;
+  setTimeout(() => {
+    pendingPlayTokenSpawns--;
+    if (state && state.players[side]) {
+      pending.forEach(t => createTokensRightOf(side, card, t.tokenId, t.count));
+      render();
+    }
+    if (onDone) onDone();
+  }, PLAY_TOKEN_DELAY_MS);
+}
+function resolvePendingPlayTokensAsync(side, card) {
+  return new Promise(res => resolvePendingPlayTokens(side, card, res));
+}
+
 // Creates `count` tokens and plays them immediately to the right of
 // sourceCard on its owner's board, in order (the 2nd lands to the right of
 // the 1st). Rendering picks them up with a one-shot pop-in animation.
@@ -3386,9 +3416,11 @@ function playFreeCardWithAnimation(side, uid) {
       // notify allies (e.g. Tridam Infantry's self-buff) and immediately
       // re-render, so the buff's sound/visual never appears ahead of the
       // power number actually changing on screen
-      notifyAllyPlay(side, card, isFirstPlayThisTurn);
-      render();
-      triggerPlayTargetDamageIfAny(side, card, null, resolve);
+      resolvePendingPlayTokens(side, card, () => {
+        notifyAllyPlay(side, card, isFirstPlayThisTurn);
+        render();
+        triggerPlayTargetDamageIfAny(side, card, null, resolve);
+      });
     };
     if (fromRect && newEl) {
       SFX.place();
@@ -3791,6 +3823,7 @@ async function aiTakeTurn() {
           resolveFly();
         }
       });
+      await resolvePendingPlayTokensAsync('ai', cardData);
     }
     if (cardData.discardChoice) {
       await handleDiscardChoiceThenEndTurn('ai', cardData.discardChoice, null, cardData);
@@ -5477,6 +5510,14 @@ function onDragEnd(e) {
     }
     const played = playCard('player', uid, previewIndex, { deferAllyNotify: true });
     render();
+    resolvePendingPlayTokens('player', playedCard, () => continueAfterPlayerPlay(playedCard, played));
+  } else {
+    renderPlayerBoard(null);
+  }
+}
+
+function continueAfterPlayerPlay(playedCard, played) {
+  {
     // Allies (e.g. Tridam Infantry) are only notified once this card's own
     // play effect has fully resolved -- immediately for a plain card, but
     // only after the discard/deck picker or targeting flow below finishes
@@ -5512,8 +5553,6 @@ function onDragEnd(e) {
       render();
       maybeAutoEndTurn('player');
     }
-  } else {
-    renderPlayerBoard(null);
   }
 }
 
@@ -5542,7 +5581,7 @@ function maybeAutoEndTurn(side) {
   setTimeout(() => {
     if (state.phase === 'playing' && state.activeTurn === side &&
         state.players[side].actedThisTurn && !state.players[side].passed &&
-        !activeTargeting && !hasAnyUsableOrder(side)) {
+        !activeTargeting && pendingPlayTokenSpawns === 0 && !hasAnyUsableOrder(side)) {
       if (side === 'player') {
         endPlayerTurnWithDraw();
       } else {
@@ -5718,6 +5757,7 @@ function coinClick() {
   // off control for good.
   if (state && state.tutorial && !tutorialAllows(coinBtn)) return;
   if (!coinIsUsable() || coinBusy || autoPassing) return;
+  if (pendingPlayTokenSpawns > 0) return; // tokens still about to pop in
   if (state.players.player.actedThisTurn) {
     endPlayerTurnWithDraw();
   } else if (state.players.player.orderUsedThisTurn) {

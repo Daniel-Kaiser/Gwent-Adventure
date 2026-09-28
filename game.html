@@ -1752,7 +1752,7 @@ const CARD_DB = {
   tridam_infantry:   { id: 'tridam_infantry', name: 'Tridam Infantry', power: 2, tier: 'bronze', img: 'cards/tridam_infantry.jpg',
                        abilities: [ { trigger: 'onAllyPlay', effect: buffTridamInfantry } ] },
 
-  dandelion:         { id: 'dandelion', name: 'Dandelion', power: 2, tier: 'silver', img: 'cards/dandelion.jpg',
+  dandelion:         { id: 'dandelion', name: 'Dandelion', power: 3, tier: 'silver', img: 'cards/dandelion.jpg',
                        deckTopChoice: true,
                        abilities: [
                          { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 3) },
@@ -1764,16 +1764,26 @@ const CARD_DB = {
                        abilities: [ { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 2) } ] },
   caretaker:         { id: 'caretaker', name: 'Caretaker', power: 2, tier: 'silver', img: 'cards/caretaker.jpg', abilities: [],
                        discardChoice: 'bronze' },
-  roach:             { id: 'roach', name: 'Roach', power: 3, tier: 'silver', img: 'cards/roach.jpg',
-                       abilities: [ { trigger: 'order', needsTarget: false, effect: (ctx) => applyPowerDelta(ctx.card, 5) } ] },
+  roach:             { id: 'roach', name: 'Roach', power: 2, tier: 'silver', img: 'cards/roach.jpg',
+                       // Passive: whenever this card's owner plays a Gold card
+                       // (from anywhere -- hand or a free/discard play alike),
+                       // Roach automatically returns from THEIR discard pile
+                       // onto their board, with the normal play-animation. See
+                       // triggerDiscardReturnPassives(), called at the same
+                       // point as onAllyPlay -- i.e. strictly after the
+                       // triggering Gold card's own play effects/abilities
+                       // have fully resolved. Not single-use: if Roach is
+                       // killed again later, a further Gold play can bring it
+                       // back again.
+                       abilities: [ { trigger: 'passiveReturnOnGoldPlay' } ] },
   scorch:            { id: 'scorch', name: 'Scorch', power: 0, tier: 'silver', img: 'cards/scorch.jpg', special: true,
                        abilities: [ { trigger: 'onPlay', effect: resolveScorch } ] },
 
-  angouleme:         { id: 'angouleme', name: 'Angoulême', power: 4, tier: 'silver', img: 'cards/angouleme.jpg', abilities: [],
-                       deckBottomChoice: 'opponent' },
+  angouleme:         { id: 'angouleme', name: 'Angoulême', power: 2, tier: 'silver', img: 'cards/angouleme.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: false, effect: (ctx) => applyPowerDelta(ctx.card, 6) } ] },
   renfri:            { id: 'renfri', name: 'Renfri', power: 3, tier: 'silver', img: 'cards/renfri.jpg', abilities: [], playTargetDamage: 3 },
   falibor:           { id: 'falibor', name: 'Falibor', power: 4, tier: 'silver', img: 'cards/falibor.jpg',
-                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, effect: (ctx, target) => applyDamage(target, 3) } ] },
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, effect: (ctx, target) => applyDamage(target, 2) } ] },
 
   villentretenmerth: { id: 'villentretenmerth', name: 'Villentretenmerth', power: 3, tier: 'gold', img: 'cards/villentretenmerth.jpg',
                        abilities: [ { trigger: 'onPlay', effect: resolveVillentretenmerth } ] },
@@ -2918,13 +2928,44 @@ function flyExistingElement(el, toRect, durationMs, onDone) {
 /* Lets other cards already on the same board react to a card being played
    -- e.g. Tridam Infantry buffing itself the first time its owner plays a
    card each turn. The just-played card itself never triggers off its own
-   play (it "doesn't count itself"). */
+   play (it "doesn't count itself"). Also the single sequencing point for
+   "return from discard" passives (see triggerDiscardReturnPassives) --
+   every code path that plays a card, however it does so, funnels through
+   here immediately after that card's own play effects/abilities have
+   fully resolved, which is exactly when a passive like Roach's needs to
+   check in. */
 function notifyAllyPlay(side, playedCard, isFirstPlayThisTurn) {
   state.players[side].board.forEach(boardCard => {
     if (boardCard.uid === playedCard.uid || !boardCard.abilities) return;
     boardCard.abilities
       .filter(a => a.trigger === 'onAllyPlay')
       .forEach(a => a.effect(boardCard, { side, playedCard, isFirstPlayThisTurn, state }));
+  });
+  triggerDiscardReturnPassives(side, playedCard);
+}
+
+/* "Passive: whenever you play a Gold card, this card gets played from your
+   discard pile onto the board automatically" (Roach). Generic per-side --
+   works the same for either player, and isn't single-use: a card brought
+   back this way can die again and come back again on a later Gold play.
+   Fires from notifyAllyPlay, i.e. strictly after the triggering Gold
+   card's own play effects have fully resolved; the actual return-to-play
+   reuses playFreeCardWithAnimation so it gets the same discard-pile-to-
+   board flight animation as any other free play from the discard pile.
+   Not awaited by its caller -- the animation runs in the background the
+   same way other post-play flourishes (buffs, etc.) do, without blocking
+   the rest of the turn flow. */
+function triggerDiscardReturnPassives(side, playedCard) {
+  if (!playedCard || playedCard.tier !== 'gold') return;
+  const p = state.players[side];
+  const candidates = p.graveyard.filter(c =>
+    c.abilities && c.abilities.some(a => a.trigger === 'passiveReturnOnGoldPlay'));
+  candidates.forEach(c => {
+    // Re-check it's still actually in the graveyard before each one --
+    // an earlier candidate's return-to-play in this same batch could in
+    // principle have already moved things around.
+    if (!p.graveyard.some(gc => gc.uid === c.uid)) return;
+    playFreeCardWithAnimation(side, c.uid);
   });
 }
 
@@ -3322,7 +3363,7 @@ async function aiUseAvailableOrders() {
       // buffs a chosen ally (e.g. Zoltan Chivay) -- pick the strongest one
       target = ai.board.slice().sort((a, b) => b.power - a.power)[0] || readyCard;
     } else {
-      // self-only Order (e.g. Roach buffing itself) -- never aim it at some
+      // self-only Order (e.g. Angoulême buffing herself) -- never aim it at some
       // other card, or applyOrderAbility will fire a buff projectile at a
       // card the effect isn't actually touching
       target = readyCard;
@@ -4465,7 +4506,7 @@ function applyOrderAbility(side, card, ability, target, onDone) {
       finish();
     }, 'buff');
   } else if (!ability.isDamage) {
-    // a self-buff (e.g. Roach) -- no projectile needed, just the sound
+    // a self-buff (e.g. Angoulême) -- no projectile needed, just the sound
     ability.effect(makeCtx(side, card), target);
     SFX.buff();
     finish();
@@ -4618,7 +4659,7 @@ function applyMultiTargetEffect(session, targetUids) {
 }
 
 // Activates a ready Order ability: if it needs a target, starts the
-// pointer-targeting flow; if not (e.g. Roach buffing only itself), resolves
+// pointer-targeting flow; if not (e.g. Angoulême buffing only herself), resolves
 // immediately against the source card itself.
 function activateOrderAbility(side, card) {
   if (activeTargeting) return;

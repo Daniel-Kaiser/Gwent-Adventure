@@ -186,7 +186,7 @@
   .side {
     background: var(--panel2);
     border-radius: 10px;
-    flex: 1 1 0;
+    flex: 0 1 200px; /* fixed-height rows; the opponent's hand row above takes the slack */
     min-height: 150px;
     max-height: 200px;
     padding: 10px;
@@ -295,8 +295,8 @@
     pointer-events: none;
   }
   #cardPreview .powerOverlay {
-    left: calc(15.5% + 2.8px); /* big hover preview only: nudged right */
-    font-size: 56px;
+    left: calc(15.5% + 3.5px); /* big hover preview only: nudged right */
+    font-size: 70px;
   }
   .powerOverlay.buffed { color: #22B14C; }
   .powerOverlay.damaged { color: #ff5252; }
@@ -574,6 +574,10 @@
 
   .hand {
     align-items: flex-end;
+    /* Sit the hand at the very bottom of the screen with roughly the bottom
+       quarter of each card (130px tall -> ~33px) cut off by the screen edge:
+       6px hand padding + 6px body padding + 33px hidden = -45px. */
+    margin-bottom: -45px;
   }
   .hand .card {
     cursor: grab;
@@ -583,7 +587,8 @@
     transform-origin: bottom center;
   }
   .hand .card:hover {
-    transform: rotate(var(--rot, 0deg)) translateY(calc(var(--ty, 0px) - 22px)) scale(1.06);
+    /* lifts enough to reveal the part hidden below the screen edge */
+    transform: rotate(var(--rot, 0deg)) translateY(calc(var(--ty, 0px) - 44px)) scale(1.06);
     box-shadow: 0 10px 20px #000c;
     z-index: 999 !important;
   }
@@ -601,12 +606,23 @@
   .opponentHandRow {
     display: flex;
     justify-content: center;
-    align-items: flex-start;
-    padding: 8px 4px 0;
-    flex: 0 0 70px;
+    align-items: center;
+    padding: 4px 4px 0;
+    flex: 1 1 0; /* takes whatever height is left above the battlefield */
+    min-height: 70px;
     position: relative;
     min-width: 0;
   }
+  /* The fanned cardbacks (+ PASSED overlay) live in this inner box so the
+     overlay covers just the fan, not the whole (tall) top row. */
+  .oppFan {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-bottom: var(--cbFanDrop, 0px);
+  }
+  .oppFan .passedOverlay { inset: -6px -10px; }
   .passedOverlay {
     position: absolute;
     inset: 0;
@@ -624,8 +640,8 @@
     z-index: 300;
   }
   .cardback {
-    width: 44px;
-    height: 62px;
+    width: var(--cbW, 44px);
+    height: var(--cbH, 62px);
     border-radius: 6px;
     background-image: url('icons/cardback.png');
     background-size: cover;
@@ -1169,9 +1185,9 @@
     position: fixed;
     left: 0;
     top: 0;
-    width: 250px;
-    height: 351px;
-    border-radius: 16px;
+    width: 312px;
+    height: 439px;
+    border-radius: 20px;
     background-size: cover;
     background-position: center;
     border: none;
@@ -4529,11 +4545,12 @@ function flyDraw(side, onDone) {
     return;
   }
   const handRect = handEl.getBoundingClientRect();
+  const cbSize = oppCardbackSize();
   const toRect = {
-    left: handRect.left + handRect.width / 2 - 22,
-    top: handRect.top + handRect.height / 2 - 31,
-    width: 44,
-    height: 62,
+    left: handRect.left + handRect.width / 2 - cbSize.w / 2,
+    top: handRect.top + handRect.height / 2 - cbSize.h / 2,
+    width: cbSize.w,
+    height: cbSize.h,
   };
 
   const el = document.createElement('div');
@@ -5055,7 +5072,7 @@ function attachPreview(el, card) {
 // Computed once on mouseenter from the card's rect, so it doesn't follow
 // the mouse around within the card.
 function positionPreview(anchorEl) {
-  const W = 250, H = 351, gap = 14, margin = 8;
+  const W = 312, H = 439, gap = 14, margin = 8;
   const vw = window.innerWidth, vh = window.innerHeight;
   const r = anchorEl && anchorEl.getBoundingClientRect ? anchorEl.getBoundingClientRect() : null;
   if (!r || (r.width === 0 && r.height === 0)) {
@@ -5128,25 +5145,43 @@ function renderOpponentHand() {
   oppHandRow.innerHTML = '';
   const n = state.players.ai.hand.length;
   const center = (n - 1) / 2;
-  const cardWidth = 44;
+  const { w: cardWidth, h: cardHeight } = oppCardbackSize();
+  const scale = cardHeight / 62;
+  oppHandRow.style.setProperty('--cbW', cardWidth + 'px');
+  oppHandRow.style.setProperty('--cbH', cardHeight + 'px');
+  const fan = document.createElement('div');
+  fan.className = 'oppFan';
+  // room below the fan for the outermost cards' downward offset
+  fan.style.setProperty('--cbFanDrop', Math.round(Math.abs(center) * 4.5 * scale) + 'px');
+  oppHandRow.appendChild(fan);
   state.players.ai.hand.forEach((_, i) => {
     const cb = document.createElement('div');
     cb.className = 'cardback';
     const offset = i - center;
     const rot = offset * 7;
-    const ty = Math.abs(offset) * 4.5; // scaled down to match the smaller card size
+    const ty = Math.abs(offset) * 4.5 * scale;
     cb.style.setProperty('--rot', rot + 'deg');
     cb.style.setProperty('--ty', ty + 'px');
     if (i > 0) cb.style.marginLeft = -(cardWidth * 0.32) + 'px';
     cb.style.zIndex = String(100 + i);
-    oppHandRow.appendChild(cb);
+    fan.appendChild(cb);
   });
   if (state.players.ai.passed) {
     const overlay = document.createElement('div');
     overlay.className = 'passedOverlay';
     overlay.textContent = 'PASSED';
-    oppHandRow.appendChild(overlay);
+    if (n === 0) { fan.style.width = '160px'; fan.style.height = '40px'; }
+    fan.appendChild(overlay);
   }
+}
+
+// Opponent cardback size: as big as the top row (the space above the
+// battlefield) allows, from the old 44x62 up to player-hand-card size.
+function oppCardbackSize() {
+  const row = document.getElementById('oppHandRow');
+  const rowH = row ? row.clientHeight : 70;
+  const h = Math.round(Math.max(62, Math.min(130, rowH - 34)));
+  return { w: Math.round(h * 44 / 62), h };
 }
 
 function renderPiles() {
@@ -6654,6 +6689,7 @@ window.addEventListener('resize', () => {
   if (!state) return;
   squeezeRow(document.getElementById('oppSide'));
   squeezeRow(document.getElementById('playerSide'));
+  renderOpponentHand();
   alignCoinToSeam();
 });
 
@@ -7498,7 +7534,9 @@ function positionTutorialUI(step) {
   const pad = 8;
   const r = target.getBoundingClientRect();
   const top = Math.max(0, r.top - pad), left = Math.max(0, r.left - pad);
-  const bottom = Math.min(vh, r.bottom + pad), right = Math.min(vw, r.right + pad);
+  // (kept a few px inside the screen so the outline stays visible for
+  // targets that run off the bottom edge, like the partly hidden hand)
+  const bottom = Math.min(vh - 4, r.bottom + pad), right = Math.min(vw, r.right + pad);
 
   // The dim only ever punches a hole for the PRIMARY target -- it's just a
   // light tint now (not a hard mask), and the secondary highlight is purely
@@ -7516,7 +7554,7 @@ function positionTutorialUI(step) {
   if (target2 && target2 !== target) {
     const r2 = target2.getBoundingClientRect();
     top2 = Math.max(0, r2.top - pad); left2 = Math.max(0, r2.left - pad);
-    bottom2 = Math.min(vh, r2.bottom + pad); right2 = Math.min(vw, r2.right + pad);
+    bottom2 = Math.min(vh - 4, r2.bottom + pad); right2 = Math.min(vw, r2.right + pad);
     tutorialHighlightEl2.style.cssText = `display:block; left:${left2}px; top:${top2}px; width:${right2 - left2}px; height:${bottom2 - top2}px;`;
   } else {
     tutorialHighlightEl2.style.display = 'none';

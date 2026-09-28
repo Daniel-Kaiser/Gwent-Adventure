@@ -155,16 +155,16 @@
     text-align: center;
   }
 
-  /* ---- Main play area -- shifted all the way to the right, leaving the
-     card-preview strip (#cardPreview reaches to ~336px) clear on the left,
-     and letting the board itself stretch into the freed-up space. ---- */
+  /* ---- Main play area -- the board rows stretch all the way to the left
+     edge of the screen (the big card inspector floats beside whatever card
+     is hovered instead of reserving a column of its own). ---- */
   #gameWrap {
     display: flex;
     gap: 16px;
     justify-content: flex-end;
     flex: 1;
     min-height: 0;
-    margin-left: 380px; /* clears the card-preview strip on the far left */
+    margin-left: 16px;
     margin-right: 28px; /* a little breathing room off the right edge */
   }
 
@@ -295,8 +295,8 @@
     pointer-events: none;
   }
   #cardPreview .powerOverlay {
-    left: calc(15.5% + 3.5px); /* big hover preview only: nudged 3.5px right */
-    font-size: 70px;
+    left: calc(15.5% + 2.8px); /* big hover preview only: nudged right */
+    font-size: 56px;
   }
   .powerOverlay.buffed { color: #22B14C; }
   .powerOverlay.damaged { color: #ff5252; }
@@ -973,6 +973,48 @@
   }
   #discardModalSelect:disabled { opacity: .4; cursor: not-allowed; }
 
+  /* ---- Minimize / maximize for the pick-a-card popups ---- */
+  .pickerHeaderBtns { display: flex; align-items: center; gap: 6px; }
+  .pickerMinBtn {
+    background: var(--panel2);
+    border: 1px solid #ffffff2a;
+    color: var(--text);
+    font-family: Arial, 'Segoe UI', sans-serif; /* GwentFont lacks these glyphs */
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    opacity: .85;
+  }
+  .pickerMinBtn:hover { opacity: 1; border-color: var(--accent); }
+  #discardModalMinimize { display: none; }
+  #discardModal.choose #discardModalMinimize { display: flex; }
+  #discardModal.minimized, #deckPickModal.minimized { display: none !important; }
+  #pickerTray {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    display: none;
+    align-items: center;
+    gap: 12px;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 10px 12px 10px 16px;
+    box-shadow: 0 8px 24px #000c;
+    z-index: 2600;
+    font-size: 13px;
+    color: var(--text);
+  }
+  #pickerTray.show { display: flex; }
+
   /* ---- Deck-top picker popup (Dandelion) ---- */
   #deckPickModal {
     position: fixed;
@@ -1093,15 +1135,15 @@
     z-index: 1;
   }
 
-  /* ---- Large hover preview, fixed to the left edge ---- */
+  /* ---- Large hover preview (inspector) -- floats beside the hovered card;
+     left/top are set in showPreview() from the card's rect. ---- */
   #cardPreview {
     position: fixed;
-    left: 24px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 312px;
-    height: 439px;
-    border-radius: 20px;
+    left: 0;
+    top: 0;
+    width: 250px;
+    height: 351px;
+    border-radius: 16px;
     background-size: cover;
     background-position: center;
     border: none;
@@ -1370,7 +1412,7 @@
     top: 0;
     right: 0;
     bottom: 0;
-    left: 360px;
+    left: 0;
     background: transparent;
     display: none;
     align-items: center;
@@ -1761,7 +1803,10 @@
   <div id="discardModalBox">
     <div id="discardModalHeader">
       <h2 id="discardModalTitle">Discard Pile</h2>
-      <button id="discardModalClose" aria-label="Close">&times;</button>
+      <div class="pickerHeaderBtns">
+        <button id="discardModalMinimize" class="pickerMinBtn" title="Minimize to look at the board" aria-label="Minimize">&ndash;</button>
+        <button id="discardModalClose" aria-label="Close">&times;</button>
+      </div>
     </div>
     <div id="discardModalGrid"></div>
     <div id="discardModalFooter">
@@ -1778,6 +1823,9 @@
   <div id="deckPickModalBox">
     <div id="deckPickModalHeader">
       <h2 id="deckPickModalTitle">Choose a Card to Put on Top</h2>
+      <div class="pickerHeaderBtns">
+        <button id="deckPickModalMinimize" class="pickerMinBtn" title="Minimize to look at the board" aria-label="Minimize">&ndash;</button>
+      </div>
     </div>
     <div id="deckPickModalGrid"></div>
     <div id="deckPickModalFooter">
@@ -1787,6 +1835,11 @@
       </div>
     </div>
   </div>
+</div>
+
+<div id="pickerTray">
+  <span id="pickerTrayLabel">Choosing a card&hellip;</span>
+  <button id="pickerMaxBtn" class="pickerMinBtn" title="Restore the card picker" aria-label="Maximize">&#9633;</button>
 </div>
 
 <div id="tutorialDimTop" class="tutorialDim"></div>
@@ -4944,13 +4997,36 @@ function cardEl(card, opts = {}) {
   return div;
 }
 
-/* ---- Large hover preview on the left edge of the screen ---- */
+/* ---- Large hover preview (inspector), floating beside the hovered card ---- */
 const previewEl = document.getElementById('cardPreview');
 function attachPreview(el, card) {
-  el.addEventListener('mouseenter', () => showPreview(card));
+  el.addEventListener('mouseenter', () => showPreview(card, el));
   el.addEventListener('mouseleave', hidePreview);
 }
-function showPreview(card) {
+// Places the inspector beside `anchorEl`: to its right when it fits, else to
+// its left; vertically centered on the card and clamped to the viewport.
+// Computed once on mouseenter from the card's rect, so it doesn't follow
+// the mouse around within the card.
+function positionPreview(anchorEl) {
+  const W = 250, H = 351, gap = 14, margin = 8;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const r = anchorEl && anchorEl.getBoundingClientRect ? anchorEl.getBoundingClientRect() : null;
+  if (!r || (r.width === 0 && r.height === 0)) {
+    previewEl.style.left = margin + 'px';
+    previewEl.style.top = Math.max(margin, (vh - H) / 2) + 'px';
+    return;
+  }
+  let left = r.right + gap;
+  if (left + W > vw - margin) left = r.left - gap - W;
+  left = Math.max(margin, Math.min(vw - W - margin, left));
+  let top = r.top + r.height / 2 - H / 2;
+  top = Math.max(margin, Math.min(vh - H - margin, top));
+  previewEl.style.left = left + 'px';
+  previewEl.style.top = top + 'px';
+}
+function showPreview(card, anchorEl) {
+  if (drag) return; // never pop the inspector over a card being dragged
+  positionPreview(anchorEl);
   previewEl.className = 'show' + (card.tier ? ' ' + card.tier : '');
   previewEl.style.backgroundImage = card.img ? `url("${card.img}")` : 'none';
   const needsOverlay = card.img && !card.powerBaked && !card.special;
@@ -5130,6 +5206,7 @@ function closeDiscardModal() {
   }
   openDiscardSide = null;
   discardModal.classList.remove('show');
+  clearPickerMinimized();
   // Clear the grid so a stale (hidden, zero-size) card element from the
   // picker never lingers in the DOM under the same data-uid as the actual
   // card once it's played elsewhere -- querySelector(`.card[data-uid=...]`)
@@ -5150,6 +5227,7 @@ discardModalSkip.addEventListener('click', () => {
   discardModal.classList.remove('show');
   openDiscardSide = null;
   discardModalGrid.innerHTML = ''; // see closeDiscardModal's comment
+  clearPickerMinimized();
   resolve(null);
 });
 discardModalSelect.addEventListener('click', () => {
@@ -5162,6 +5240,7 @@ discardModalSelect.addEventListener('click', () => {
   discardModal.classList.remove('show');
   openDiscardSide = null;
   discardModalGrid.innerHTML = ''; // see closeDiscardModal's comment
+  clearPickerMinimized();
   resolve(chosenCard || null);
 });
 
@@ -5221,6 +5300,7 @@ function closeDeckPickModal() {
   }
   openDeckPickSide = null;
   deckPickModal.classList.remove('show');
+  clearPickerMinimized();
 }
 
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openDeckPickSide) closeDeckPickModal(); });
@@ -5233,7 +5313,57 @@ deckPickModalSelect.addEventListener('click', () => {
   deckPickChooser = null;
   deckPickModal.classList.remove('show');
   openDeckPickSide = null;
+  clearPickerMinimized();
   resolve(chosenCard || null);
+});
+
+/* ---- Minimize / maximize for the pick-a-card popups (discard picker:
+   Yennefer, Caretaker, Vysogota, Nenneke...; deck picker: Dandelion,
+   Angouleme...). Minimizing hides the popup (its chooser state is left
+   untouched) and shows a small tray bottom-right with a Maximize button.
+   While minimized the player can hover cards to inspect them, but every
+   other interaction (drag, click, Orders, targeting, coin click/hold,
+   pile viewers, menu/log, keyboard) is swallowed at the capture phase --
+   except the tray itself. The pending choice's promise stays unresolved,
+   so turn / AI flow remains paused exactly as before. ---- */
+let pickerMinimized = null; // the minimized modal element, or null
+const pickerTray = document.getElementById('pickerTray');
+function minimizePicker(modalEl) {
+  if (pickerMinimized) return;
+  pickerMinimized = modalEl;
+  modalEl.classList.add('minimized');
+  pickerTray.classList.add('show');
+  hidePreview();
+}
+function maximizePicker() {
+  if (!pickerMinimized) return;
+  pickerMinimized.classList.remove('minimized');
+  pickerMinimized = null;
+  pickerTray.classList.remove('show');
+  hidePreview();
+}
+function clearPickerMinimized() {
+  discardModal.classList.remove('minimized');
+  deckPickModal.classList.remove('minimized');
+  pickerMinimized = null;
+  pickerTray.classList.remove('show');
+}
+document.getElementById('discardModalMinimize').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (discardChooser) minimizePicker(discardModal);
+});
+document.getElementById('deckPickModalMinimize').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (deckPickChooser) minimizePicker(deckPickModal);
+});
+document.getElementById('pickerMaxBtn').addEventListener('click', maximizePicker);
+['pointerdown', 'mousedown', 'mouseup', 'pointerup', 'touchstart', 'touchend', 'click', 'dblclick', 'contextmenu', 'keydown'].forEach(type => {
+  window.addEventListener(type, (e) => {
+    if (!pickerMinimized) return;
+    if (e.target && e.target.closest && e.target.closest('#pickerTray')) return;
+    e.stopImmediatePropagation();
+    if (e.cancelable) e.preventDefault();
+  }, { capture: true, passive: false });
 });
 
 function setDiscardTop(pileId, graveyard) {
@@ -6892,7 +7022,7 @@ const TUTORIAL_STEPS = [
   },
   {
     target: '#playerHand',
-    text: "This is your hand of cards. Hover over them to see a preview on the left.",
+    text: "This is your hand of cards. Hover over them to see a preview.",
     onEnter: () => { tutorialHoverUid = null; },
     checkComplete: () => state.players.player.hand.some(c => tutorialHoverUid === c.uid),
   },

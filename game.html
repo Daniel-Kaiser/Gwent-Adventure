@@ -1119,7 +1119,7 @@
     font-size: 14px;
     letter-spacing: 1.5px;
     padding: 10px 32px;
-    background: transparent;
+    background: #13294a;
     color: #e7edf3;
     border: 2px solid #5a6b7d;
     border-radius: 8px;
@@ -1128,7 +1128,36 @@
     box-shadow: 0 6px 16px #0007;
     transition: transform .15s ease, filter .15s ease, background-color .15s ease;
   }
-  .titleSecondaryBtn:hover { background-color: #ffffff1a; transform: translateY(-2px); }
+  .titleSecondaryBtn:hover { background-color: #1e3d6b; transform: translateY(-2px); }
+
+  /* ---- Settings modal (main menu) ---- */
+  #settingsModal {
+    position: fixed; inset: 0; background: #0009;
+    display: none; align-items: center; justify-content: center;
+    z-index: 2100; /* above #titleScreen (2000) */
+  }
+  #settingsModal.show { display: flex; }
+  #settingsBox {
+    position: relative; width: 360px; max-width: calc(100vw - 32px);
+    background: var(--panel); border-radius: 14px; padding: 20px 24px 24px;
+    box-shadow: 0 16px 40px #000c; color: var(--text);
+  }
+  #settingsBox h2 { margin: 0 0 16px; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; }
+  #settingsCloseBtn {
+    position: absolute; top: 10px; right: 12px; background: none; border: none;
+    color: var(--muted); font-size: 26px; cursor: pointer; line-height: 1;
+  }
+  #settingsCloseBtn:hover { color: var(--text); }
+  .settingsRow { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .settingsRow label { flex: 1; font-weight: 700; }
+  .settingsRow input[type=range] { flex: 1; accent-color: var(--accent); }
+  .settingsRow .settingsVal { font-size: 12px; color: var(--muted); min-width: 34px; text-align: right; }
+  .settingsDesc { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+  .settingsToggle {
+    min-width: 58px; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 700;
+    border: 2px solid #5a6b7d; background: #13294a; color: #e7edf3;
+  }
+  .settingsToggle.on { background: var(--accent); color: #04121f; border-color: var(--accent); }
 
   /* ---- Tutorial modal ---- */
   #tutorialModal {
@@ -1516,7 +1545,7 @@
     <button id="titleNewGameBtn">New Game</button>
     <button id="titleTutorialBtn" class="titleSecondaryBtn">Tutorial</button>
     <button id="titleLibraryBtn" class="titleSecondaryBtn">Card Library</button>
-    <button id="titleAutoEndTurnBtn" class="titleSecondaryBtn">Auto End Turn: Off</button>
+    <button id="titleSettingsBtn" class="titleSecondaryBtn">Settings</button>
   </div>
 </div>
 
@@ -1543,6 +1572,26 @@
   </div>
 </div>
 
+<div id="settingsModal">
+  <div id="settingsBox">
+    <button id="settingsCloseBtn" aria-label="Close">&times;</button>
+    <h2>Settings</h2>
+    <div class="settingsRow">
+      <label for="settingsVolumeSlider">Music volume</label>
+      <input type="range" id="settingsVolumeSlider" min="0" max="100" value="15">
+      <span class="settingsVal" id="settingsVolumeVal">15%</span>
+    </div>
+    <div class="settingsRow">
+      <label>Auto end turn</label>
+      <button type="button" id="settingsAutoEndTurnToggle" class="settingsToggle">Off</button>
+    </div>
+    <p class="settingsDesc">Automatically ends your turn when you have no actions left to do.</p>
+    <div class="settingsRow">
+      <label>Developer mode</label>
+      <button type="button" id="settingsDevModeToggle" class="settingsToggle">Off</button>
+    </div>
+  </div>
+</div>
 <div id="libraryModal">
   <div id="libraryBox">
     <button id="libraryCloseBtn" aria-label="Close">&times;</button>
@@ -1943,7 +1992,10 @@ const SFX = (() => {
     noise.stop(t + 0.14);
     tone(90, t, 0.16, 'sine', 0.18, ac);
   }
-  return { pickup, place, coinToss, impact, cardDraw, buff, gameOver, roundEnd, burn };
+  function buttonHover() {
+    playClip('sfx/button_hover.mp3', 0.5);
+  }
+  return { pickup, place, coinToss, impact, cardDraw, buff, gameOver, roundEnd, burn, buttonHover };
 })();
 
 /* Certain cards have played-card voice lines -- one random line (per card
@@ -5534,16 +5586,19 @@ document.getElementById('titleLibraryBtn').addEventListener('click', () => {
 let autoEndTurnEnabled = false;
 function updateAutoEndTurnButtons() {
   const label = 'Auto End Turn: ' + (autoEndTurnEnabled ? 'On' : 'Off');
-  const titleBtn = document.getElementById('titleAutoEndTurnBtn');
   const menuBtn = document.getElementById('menuAutoEndTurnBtn');
-  if (titleBtn) titleBtn.textContent = label;
   if (menuBtn) menuBtn.textContent = label;
+  const settingsBtn = document.getElementById('settingsAutoEndTurnToggle');
+  if (settingsBtn) {
+    settingsBtn.textContent = autoEndTurnEnabled ? 'On' : 'Off';
+    settingsBtn.classList.toggle('on', autoEndTurnEnabled);
+  }
 }
 function toggleAutoEndTurn() {
   autoEndTurnEnabled = !autoEndTurnEnabled;
   updateAutoEndTurnButtons();
 }
-document.getElementById('titleAutoEndTurnBtn').addEventListener('click', toggleAutoEndTurn);
+document.getElementById('settingsAutoEndTurnToggle').addEventListener('click', toggleAutoEndTurn);
 document.getElementById('menuAutoEndTurnBtn').addEventListener('click', toggleAutoEndTurn);
 updateAutoEndTurnButtons();
 document.getElementById('libraryCloseBtn').addEventListener('click', closeLibraryModal);
@@ -5604,10 +5659,50 @@ document.getElementById('menuVolumeBtn').addEventListener('click', () => {
   updateHamburgerMenuDom();
 });
 
-volumeSliderEl.addEventListener('input', () => {
-  const pct = Number(volumeSliderEl.value);
+// The in-game hamburger slider and the main-menu Settings slider both
+// drive the same Music volume and are kept in sync with each other.
+const settingsVolumeSliderEl = document.getElementById('settingsVolumeSlider');
+const settingsVolumeValEl = document.getElementById('settingsVolumeVal');
+function setMusicVolumePct(pct) {
+  volumeSliderEl.value = pct;
   volumeSliderValEl.textContent = `${pct}%`;
+  settingsVolumeSliderEl.value = pct;
+  settingsVolumeValEl.textContent = `${pct}%`;
   Music.setVolume(pct / 100);
+}
+settingsVolumeSliderEl.value = volumeSliderEl.value;
+settingsVolumeValEl.textContent = `${volumeSliderEl.value}%`;
+volumeSliderEl.addEventListener('input', () => setMusicVolumePct(Number(volumeSliderEl.value)));
+settingsVolumeSliderEl.addEventListener('input', () => setMusicVolumePct(Number(settingsVolumeSliderEl.value)));
+
+/* =========================================================
+   SETTINGS MODAL (main menu) -- music volume, auto end turn, developer mode.
+========================================================= */
+// Developer mode: toggle state only for now, no functionality attached yet.
+let developerModeEnabled = false;
+const settingsModal = document.getElementById('settingsModal');
+const settingsDevModeToggle = document.getElementById('settingsDevModeToggle');
+function updateDevModeToggle() {
+  settingsDevModeToggle.textContent = developerModeEnabled ? 'On' : 'Off';
+  settingsDevModeToggle.classList.toggle('on', developerModeEnabled);
+}
+settingsDevModeToggle.addEventListener('click', () => {
+  developerModeEnabled = !developerModeEnabled;
+  updateDevModeToggle();
+});
+updateDevModeToggle();
+function openSettingsModal() {
+  updateAutoEndTurnButtons();
+  settingsModal.classList.add('show');
+}
+function closeSettingsModal() { settingsModal.classList.remove('show'); }
+document.getElementById('titleSettingsBtn').addEventListener('click', openSettingsModal);
+document.getElementById('settingsCloseBtn').addEventListener('click', closeSettingsModal);
+settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) closeSettingsModal(); });
+
+// Hover sound on every main-menu button (mouseenter fires once per entry).
+document.querySelectorAll('#titleButtons button').forEach(btn => {
+  btn.addEventListener('mouseenter', () => SFX.buttonHover());
 });
 
 // Once the volume slider is open, any click that isn't on the slider

@@ -232,7 +232,7 @@
   .card .power {
     position: absolute;
     top: 4px;
-    left: 7.5px;
+    left: 4px;
     background: #000a;
     border-radius: 50%;
     width: 24px;
@@ -266,7 +266,7 @@
      for cards whose art doesn't already have a number painted in. */
   .powerOverlay {
     position: absolute;
-    left: calc(15.5% + 3.5px); /* nudged 3.5px right of the art's diamond centre */
+    left: 15.5%;
     top: 12%;
     transform: translate(-50%, -50%);
     width: 34%;
@@ -286,6 +286,7 @@
     pointer-events: none;
   }
   #cardPreview .powerOverlay {
+    left: calc(15.5% + 3.5px); /* big hover preview only: nudged 3.5px right */
     font-size: 70px;
   }
   .powerOverlay.buffed { color: #22B14C; }

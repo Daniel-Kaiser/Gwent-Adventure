@@ -1143,15 +1143,6 @@
     box-shadow: 0 16px 40px #000c; color: var(--text);
   }
   #settingsBox h2 { margin: 0 0 16px; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; }
-  #settingsCloseBtn {
-    position: absolute; top: 10px; right: 10px;
-    width: 34px; height: 34px; padding: 0;
-    display: flex; align-items: center; justify-content: center;
-    background: #13294a; border: 2px solid #5a6b7d; border-radius: 8px;
-    color: #ffffff; font-size: 24px; font-weight: 700; line-height: 1; cursor: pointer;
-    transition: background-color .15s ease, border-color .15s ease;
-  }
-  #settingsCloseBtn:hover { background: #c0392b; border-color: #e74c3c; }
   .settingsRow { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
   .settingsRow label { flex: 1; font-weight: 700; }
   .settingsRow input[type=range] { flex: 1; accent-color: var(--accent); }
@@ -1414,7 +1405,8 @@
   }
   #libraryFiltersMenu label:hover { background: #ffffff14; }
   #libraryFiltersMenu input { cursor: pointer; }
-  #libraryCloseBtn {
+  /* Shared close "×" for popups (Card Library, Settings). */
+  .modalCloseBtn {
     position: absolute;
     top: 14px;
     right: 16px;
@@ -1428,7 +1420,7 @@
     padding: 0 4px;
     opacity: .75;
   }
-  #libraryCloseBtn:hover { opacity: 1; }
+  .modalCloseBtn:hover { opacity: 1; }
   #libraryGrid {
     flex: 1;
     min-height: 0;
@@ -1578,7 +1570,7 @@
 
 <div id="settingsModal">
   <div id="settingsBox">
-    <button id="settingsCloseBtn" aria-label="Close">&times;</button>
+    <button id="settingsCloseBtn" class="modalCloseBtn" aria-label="Close">&times;</button>
     <h2>Settings</h2>
     <div class="settingsRow">
       <label for="settingsVolumeSlider">Music volume</label>
@@ -1598,7 +1590,7 @@
 </div>
 <div id="libraryModal">
   <div id="libraryBox">
-    <button id="libraryCloseBtn" aria-label="Close">&times;</button>
+    <button id="libraryCloseBtn" class="modalCloseBtn" aria-label="Close">&times;</button>
     <div id="libraryHeader">
       <div id="libraryFiltersWrap">
         <button id="libraryFiltersBtn" type="button">Filters</button>

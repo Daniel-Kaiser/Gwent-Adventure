@@ -1842,7 +1842,10 @@ const CARD_DB = {
   ciri:              { id: 'ciri', name: 'Ciri', power: 4, tier: 'gold', img: 'cards/ciri.jpg',
                        abilities: [ { event: 'roundEndFate', effect: (card, info) => info.lost ? 'hand' : 'graveyard' } ] },
   yennefer:          { id: 'yennefer', name: 'Yennefer of Vengerberg', power: 4, tier: 'gold', img: 'cards/yennefer.jpg', abilities: [],
-                       discardChoice: 'bronze' },
+                       discardChoice: 'bronze',
+                       // her voice line waits until her revive ability has fully resolved
+                       // (see handleDiscardChoiceThenEndTurn) instead of playing on play
+                       deferVoiceLine: true },
 
   // Tutorial-only cards: never appear in a normal random deck or the Card
   // Library, only ever dealt directly by the tutorial script (see
@@ -2037,7 +2040,9 @@ const CARD_VOICE_LINES = {
 };
 function playCardVoiceLine(card) {
   const lines = CARD_VOICE_LINES[card.id];
-  if (!lines) return;
+  if (!lines) return Promise.resolve();
+  let resolveDone;
+  const donePromise = new Promise(r => { resolveDone = r; });
   const line = lines[Math.floor(Math.random() * lines.length)];
   const audio = new Audio(line.url);
   audio.volume = 0.85;
@@ -2069,13 +2074,14 @@ function playCardVoiceLine(card) {
     if (done) return;
     done = true;
     bubble.classList.remove('show');
-    setTimeout(() => bubble.remove(), 220);
+    setTimeout(() => { bubble.remove(); resolveDone(); }, 220);
   };
   audio.addEventListener('ended', remove, { once: true });
   // Never leave the bubble stuck on screen if playback is blocked or fails silently.
   const fallbackTimer = setTimeout(remove, 6000);
   audio.addEventListener('ended', () => clearTimeout(fallbackTimer), { once: true });
   audio.play().catch(remove);
+  return donePromise;
 }
 
 /* =========================================================
@@ -2887,7 +2893,7 @@ function playCard(side, uid, index, opts) {
     notifyAllyPlay(side, card, isFirstPlayThisTurn);
   }
   logMsg(`${side === 'player' ? 'You' : 'Opponent'} played ${card.name} (${card.power}).`);
-  if (CARD_VOICE_LINES[card.id]) playCardVoiceLine(card);
+  if (CARD_VOICE_LINES[card.id] && !card.deferVoiceLine) playCardVoiceLine(card);
   return { card, isFirstPlayThisTurn };
 }
 
@@ -3059,7 +3065,7 @@ function playCardFromGraveyard(side, uid) {
   logMsg(`${side === 'player' ? 'You' : 'Opponent'} played ${card.name} (${card.power}) free from the discard pile.`);
   // Free plays from the discard pile (e.g. Roach's Gold-card passive,
   // Yennefer/Caretaker returns) get the same voice line as a hand play.
-  if (CARD_VOICE_LINES[card.id]) playCardVoiceLine(card);
+  if (CARD_VOICE_LINES[card.id]) card._voicePromise = playCardVoiceLine(card);
   return card;
 }
 
@@ -3068,7 +3074,18 @@ function playCardFromGraveyard(side, uid) {
    discard-pile picker; for the AI it just auto-picks the strongest eligible
    card. Once resolved (or skipped/nothing eligible), continues the normal
    end-of-turn flow. */
-async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo) {
+async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo, sourceCard) {
+  sourceCard = sourceCard || (notifyInfo && notifyInfo.card);
+  // A card with a deferred voice line (Yennefer) speaks only once her
+  // ability has fully resolved -- after the pick and the revived card's
+  // landing, and after the revived card's own voice line if it has one, so
+  // the two never overlap. Fire-and-forget: it doesn't hold up the turn.
+  const playDeferredVoice = (revived) => {
+    if (!sourceCard || !sourceCard.deferVoiceLine || !CARD_VOICE_LINES[sourceCard.id]) return;
+    const before = (revived && revived._voicePromise) || Promise.resolve();
+    if (revived) delete revived._voicePromise;
+    before.then(() => playCardVoiceLine(sourceCard));
+  };
   // Allies (e.g. Tridam Infantry) are notified only once the played card's
   // (Yennefer's/Caretaker's) own effect is fully resolved, whatever path that took.
   const finish = () => {
@@ -3079,6 +3096,7 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo) {
   const eligible = state.players[side].graveyard.filter(c => c.tier === tier);
   if (eligible.length === 0) {
     logMsg(`${side === 'player' ? 'You have' : 'Opponent has'} no ${tier} cards in the discard pile to play.`);
+    playDeferredVoice(null); // ability fizzled -- speak right away
     finish();
     return;
   } else if (side === 'player') {
@@ -3090,6 +3108,7 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo) {
         await playFreeCardWithAnimation('player', chosen.uid);
       }
     }
+    playDeferredVoice(chosen);
   } else {
     const best = eligible.slice().sort((a, b) => b.power - a.power)[0];
     if (best.special) {
@@ -3097,6 +3116,7 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo) {
     } else {
       await playFreeCardWithAnimation('ai', best.uid);
     }
+    playDeferredVoice(best);
   }
   finish();
 }
@@ -3513,7 +3533,7 @@ async function aiTakeTurn() {
       });
     }
     if (cardData.discardChoice) {
-      await handleDiscardChoiceThenEndTurn('ai', cardData.discardChoice);
+      await handleDiscardChoiceThenEndTurn('ai', cardData.discardChoice, null, cardData);
     }
     if (cardData.deckTopChoice) {
       await handleDeckTopChoiceThenEndTurn('ai');

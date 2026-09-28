@@ -2080,7 +2080,14 @@ const SFX = (() => {
   function cardDraw() {
     playClip('sfx/card_draw.mp3');
   }
+  // Deduped: several buffs landing in the same tick (e.g. two passive
+  // +2s on a 2nd Order, or a self-buff Order that is also the 2nd Order)
+  // play one clip rather than stacking identical copies.
+  let lastBuffAt = -Infinity;
   function buff() {
+    const now = performance.now();
+    if (now - lastBuffAt < 60) return;
+    lastBuffAt = now;
     playClip('sfx/buff.mp3');
   }
   // Plays the round/game-over sting, optionally calling onEnded once it has
@@ -2566,11 +2573,14 @@ function noteOrderUsed(side) {
       refreshOrder(c);
       logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name}'s Order is refreshed.`);
     });
-    // Temerian Infantry: +2 power on its owner's 2nd Order of the turn
-    p.board.filter(c => c.buffOnSecondOrder).forEach(c => {
+    // Temerian Infantry / Prince Stennis: +2 power on its owner's 2nd Order
+    // of the turn (one buff clip for however many fire together)
+    const secondOrderBuffers = p.board.filter(c => c.buffOnSecondOrder);
+    secondOrderBuffers.forEach(c => {
       applyPowerDelta(c, c.buffOnSecondOrder);
       logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name} gains ${c.buffOnSecondOrder} power.`);
     });
+    if (secondOrderBuffers.length) SFX.buff();
     triggerSecondOrderDiscardReturns(side);
   }
 }

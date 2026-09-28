@@ -1010,6 +1010,15 @@
   #deckPickModalSelect:disabled { opacity: .4; cursor: not-allowed; }
 
   /* ---- Played-card voice-line speech bubble (Geralt, Ciri, ...) ---- */
+  /* Maxii van Dekkar's face-up reveal of the top card of a deck, shown
+     beside that player's deck pile while her Play damage resolves. */
+  .deckTopReveal {
+    position: fixed; z-index: 150; pointer-events: none;
+    opacity: 0; transform: scale(.9); transition: opacity .2s ease, transform .2s ease;
+    box-shadow: 0 0 0 2px var(--accent), 0 12px 30px #000c; border-radius: 8px;
+  }
+  .deckTopReveal.show { opacity: 1; transform: scale(1); }
+  .deckTopReveal .card { margin: 0; }
   .cardSpeechBubble {
     position: fixed;
     transform: translate(-50%, calc(-100% - 14px)) scale(0.85);
@@ -1828,6 +1837,11 @@ const CARD_DB = {
 
   angouleme:         { id: 'angouleme', name: 'Angoulême', power: 2, tier: 'silver', img: 'cards/angouleme.jpg',
                        abilities: [ { trigger: 'order', needsTarget: false, effect: (ctx) => applyPowerDelta(ctx.card, 6) } ] },
+  // Play: Look at the top card of your deck. Deal damage equal to its power.
+  // (see startDeckTopDamage -- reveals the top card beside its owner's deck
+  // pile during targeting; the card stays on top of the deck)
+  maxii_van_dekkar:  { id: 'maxii_van_dekkar', name: 'Maxii van Dekkar', power: 2, tier: 'silver', img: 'cards/maxii_van_dekkar.jpg', abilities: [],
+                       playDamageFromDeckTop: true },
   renfri:            { id: 'renfri', name: 'Renfri', power: 3, tier: 'silver', img: 'cards/renfri.jpg', abilities: [], playTargetDamage: 3 },
   falibor:           { id: 'falibor', name: 'Falibor', power: 4, tier: 'silver', img: 'cards/falibor.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
@@ -3554,6 +3568,10 @@ async function aiTakeTurn() {
     if (cardData.deckBottomChoice) {
       await handleDeckBottomChoiceThenEndTurn('ai');
     }
+    if (cardData.playDamageFromDeckTop) {
+      await delay(500);
+      await startDeckTopDamage('ai', cardData, null);
+    }
     if (cardData.playTargetDamage) {
       const enemyBoard = state.players.player.board;
       // Only worth using if there's an actual enemy card to hit -- never
@@ -3903,6 +3921,80 @@ function pickDebuffTarget(side) {
   return buffed.reduce((best, c) => (!best || (c.power - c.basePower) > (best.power - best.basePower)) ? c : best, null);
 }
 
+/* ---- Maxii van Dekkar: "Look at the top card of your deck. Deal damage
+   equal to its power." ----
+   No modal: the top card of the owner's deck (drawCards pops from the end,
+   so it's the last array element) is shown face-up beside their deck pile
+   while the damage target is chosen, then hidden. The card itself is never
+   moved -- it stays on top of the deck. Damage = that card's power as it
+   sits in the deck, applied through the normal playDamage flow
+   (applyPlayDamage -> applyDamage). Empty deck or 0 power: fizzles. */
+function showDeckTopReveal(side, topCard) {
+  const pile = document.getElementById(side === 'player' ? 'deckPileMe' : 'deckPileOpp');
+  const wrap = document.createElement('div');
+  wrap.className = 'deckTopReveal';
+  const el = cardEl(topCard, { disabled: true });
+  attachPreview(el, topCard);
+  wrap.appendChild(el);
+  document.body.appendChild(wrap);
+  if (pile) {
+    const r = pile.getBoundingClientRect();
+    const w = wrap.offsetWidth, h = wrap.offsetHeight;
+    wrap.style.left = `${Math.max(8, r.left - w - 14)}px`;
+    wrap.style.top = `${Math.max(8, Math.min(window.innerHeight - h - 8, r.top + r.height / 2 - h / 2))}px`;
+  }
+  requestAnimationFrame(() => wrap.classList.add('show'));
+  return () => {
+    wrap.classList.remove('show');
+    setTimeout(() => wrap.remove(), 220);
+  };
+}
+
+function startDeckTopDamage(side, card, notifyInfo, onDone) {
+  return new Promise(resolve => {
+    const finish = () => {
+      if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      render();
+      if (onDone) onDone();
+      if (side === 'player') maybeAutoEndTurn('player');
+      resolve();
+    };
+    const who = side === 'player' ? 'Your' : "Opponent's";
+    const deck = state.players[side].deck;
+    const top = deck[deck.length - 1];
+    if (!top) {
+      logMsg(`${who} deck is empty -- ${card.name} has no effect.`);
+      finish();
+      return;
+    }
+    const amount = top.power;
+    logMsg(`${who} ${card.name} reveals ${top.name} (${amount}) from the top of the deck.`);
+    const hide = showDeckTopReveal(side, top);
+    const liveCard = state.players[side].board.find(c => c.uid === card.uid) || card;
+    const allTargets = [...state.players.player.board, ...state.players.ai.board];
+    if (amount <= 0 || allTargets.length === 0) {
+      setTimeout(() => { hide(); finish(); }, 1100);
+      return;
+    }
+    if (side === 'player') {
+      // normal click-to-target flow (same rules/cancel behavior as any
+      // Play damage). The reveal is hidden as soon as this targeting
+      // session ends, however it ends (resolved or cancelled).
+      const session = { side: 'player', card: liveCard, kind: 'playDamage', amount, notifyInfo, onDone: () => { if (onDone) onDone(); resolve(); } };
+      startTargeting(session);
+      const watch = () => { if (activeTargeting === session) requestAnimationFrame(watch); else hide(); };
+      requestAnimationFrame(watch);
+    } else {
+      const enemyBoard = state.players.player.board;
+      setTimeout(() => {
+        if (enemyBoard.length === 0) { hide(); finish(); return; }
+        const target = pickKillableOrBestDamageTarget(enemyBoard, amount);
+        applyPlayDamage('ai', liveCard, amount, target, () => { hide(); finish(); });
+      }, 900);
+    }
+  });
+}
+
 // Fires a card's deferred Play-triggered target effect (playTargetDamage or
 // playTargetRemoveBuffs) if it has one -- shared by every way a card can
 // enter play (hand plays and free plays from the graveyard alike), so the
@@ -3914,7 +4006,9 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
     render();
     if (onDone) onDone();
   };
-  if (card.playTargetDamage) {
+  if (card.playDamageFromDeckTop) {
+    startDeckTopDamage(side, card, notifyInfo, onDone);
+  } else if (card.playTargetDamage) {
     if (side === 'player') {
       startTargeting({ side: 'player', card, kind: 'playDamage', amount: card.playTargetDamage, notifyInfo, onDone });
     } else {
@@ -5125,6 +5219,8 @@ function onDragEnd(e) {
       handleDeckTopChoiceThenEndTurn('player', notifyInfo);
     } else if (playedCard && playedCard.deckBottomChoice) {
       handleDeckBottomChoiceThenEndTurn('player', notifyInfo);
+    } else if (playedCard && playedCard.playDamageFromDeckTop) {
+      startDeckTopDamage('player', playedCard, notifyInfo);
     } else if (playedCard && playedCard.playTargetDamage) {
       startTargeting({ side: 'player', card: playedCard, kind: 'playDamage', amount: playedCard.playTargetDamage, notifyInfo });
     } else if (playedCard && playedCard.playTargetRemoveBuffs) {

@@ -2003,8 +2003,8 @@ const CARD_DB = {
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'soldier_token', 2) } ] },
   poor_fucking_infantry: { id: 'poor_fucking_infantry', name: 'Poor Fucking Infantry', power: 3, tier: 'bronze', faction: 'northern_realms', img: 'cards/poor_fucking_infantry.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'soldier_token', 1) } ] },
-  // Play: if its owner has used fewer than 2 Orders this turn, it's discarded.
-  siege_tower:       { id: 'siege_tower', name: 'Siege Tower', power: 6, tier: 'bronze', faction: 'northern_realms', img: 'cards/siege_tower.jpg',
+  // Play: if its owner has used 2+ Orders this turn, it gets +3 (a buff).
+  siege_tower:       { id: 'siege_tower', name: 'Siege Tower', power: 3, tier: 'bronze', faction: 'northern_realms', img: 'cards/siege_tower.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => resolveSiegeTower(ctx.side, ctx.card) } ] },
   // Order: +1 to another card. Its Order refreshes whenever its owner plays
   // a card that has an Order (hand, revive, or an Order-bearing token) --
@@ -2017,38 +2017,38 @@ const CARD_DB = {
   temerian_infantry: { id: 'temerian_infantry', name: 'Temerian Infantry', power: 2, tier: 'bronze', faction: 'northern_realms', img: 'cards/temerian_infantry.jpg',
                        buffOnSecondOrder: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
-  /* ---- Dwarves (faction: 'scoiatael') -- bronze batch. Buff reactions
+  /* ---- Dwarves (faction: 'mahakam') -- bronze batch. Buff reactions
      (Defender / Smith / Berserker / Chariot) hang off onCardBuffed(). ---- */
   // Play (may) AND Order: deal 2 damage.
-  dwarven_skirmisher: { id: 'dwarven_skirmisher', name: 'Dwarven Skirmisher', power: 1, tier: 'bronze', faction: 'scoiatael', img: 'cards/dwarven_skirmisher.jpg', playTargetDamage: 2,
+  dwarven_skirmisher: { id: 'dwarven_skirmisher', name: 'Dwarven Skirmisher', power: 1, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarven_skirmisher.jpg', playTargetDamage: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
   // Play: +1 to another card in play, then again (two sequential picks, the
   // same card may be picked twice). Order: deal 1 damage.
-  mahakam_adventurer: { id: 'mahakam_adventurer', name: 'Mahakam Adventurer', power: 2, tier: 'bronze', faction: 'scoiatael', img: 'cards/mahakam_adventurer.jpg', playBuffRepeat: 2,
+  mahakam_adventurer: { id: 'mahakam_adventurer', name: 'Mahakam Adventurer', power: 2, tier: 'bronze', faction: 'mahakam', img: 'cards/mahakam_adventurer.jpg', playBuffRepeat: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
   // Order: deal 1. Passive: +1 the first time each turn its owner buffs another card.
-  mahakam_defender:  { id: 'mahakam_defender', name: 'Mahakam Defender', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/mahakam_defender.jpg', buffOnOwnerBuffOther: 1,
+  mahakam_defender:  { id: 'mahakam_defender', name: 'Mahakam Defender', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/mahakam_defender.jpg', buffOnOwnerBuffOther: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
   // Play (may) AND Order: +1 to another card in play.
-  mahakam_guard:     { id: 'mahakam_guard', name: 'Mahakam Guard', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/mahakam_guard.jpg', playBuffRepeat: 1,
+  mahakam_guard:     { id: 'mahakam_guard', name: 'Mahakam Guard', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/mahakam_guard.jpg', playBuffRepeat: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
   // Order: +1 to another card. Its Order refreshes whenever it gets buffed.
-  mahakam_smith:     { id: 'mahakam_smith', name: 'Mahakam Smith', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/mahakam_smith.jpg', refreshOnBuffed: true,
+  mahakam_smith:     { id: 'mahakam_smith', name: 'Mahakam Smith', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/mahakam_smith.jpg', refreshOnBuffed: true,
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
   // Order: discard the highest card(s) in play (both boards, itself if tied).
-  pyrotechnician:    { id: 'pyrotechnician', name: 'Pyrotechnician', power: 1, tier: 'bronze', faction: 'scoiatael', img: 'cards/pyrotechnician.jpg',
+  pyrotechnician:    { id: 'pyrotechnician', name: 'Pyrotechnician', power: 1, tier: 'bronze', faction: 'mahakam', img: 'cards/pyrotechnician.jpg',
                        abilities: [ { trigger: 'order', needsTarget: false, isScorch: true, effect: (ctx) => resolveHighestDiscardOrder(ctx.side, ctx.card) } ] },
   // Play: up to 3 other distinct cards in play get +1 (Troubadour-style multi pick).
-  rowdy_dwarf:       { id: 'rowdy_dwarf', name: 'Rowdy Dwarf', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/rowdy_dwarf.jpg', abilities: [], playBuffMulti: 3 },
+  rowdy_dwarf:       { id: 'rowdy_dwarf', name: 'Rowdy Dwarf', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/rowdy_dwarf.jpg', abilities: [], playBuffMulti: 3 },
   // Order: deal 1. Its Order refreshes whenever it gets buffed.
-  dwarf_berserker:   { id: 'dwarf_berserker', name: 'Dwarf Berserker', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/dwarf_berserker.jpg', refreshOnBuffed: true,
+  dwarf_berserker:   { id: 'dwarf_berserker', name: 'Dwarf Berserker', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarf_berserker.jpg', refreshOnBuffed: true,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
   // Passive: the first time each turn its owner's effects buff it, its owner
   // gives another card +1.
-  dwarven_chariot:   { id: 'dwarven_chariot', name: 'Dwarven Chariot', power: 4, tier: 'bronze', faction: 'scoiatael', img: 'cards/dwarven_chariot.jpg', chariotOnOwnerBuff: 1, abilities: [] },
+  dwarven_chariot:   { id: 'dwarven_chariot', name: 'Dwarven Chariot', power: 4, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarven_chariot.jpg', chariotOnOwnerBuff: 1, abilities: [] },
   // Play (may): move a card in play with exactly 1 power to the other side.
   // Order: +1 to a card in play (itself included).
-  dwarven_mercenary: { id: 'dwarven_mercenary', name: 'Dwarven Mercenary', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/dwarven_mercenary.jpg', playMoveOnePower: true,
+  dwarven_mercenary: { id: 'dwarven_mercenary', name: 'Dwarven Mercenary', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarven_mercenary.jpg', playMoveOnePower: true,
                        abilities: [ { trigger: 'order', needsTarget: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
 
   /* ---- Northern Realms silvers ---- */
@@ -3014,15 +3014,13 @@ function createTokensRightOf(side, sourceCard, tokenId, count) {
   return created;
 }
 
-/* Siege Tower's Play: discarded (normal death/discard animation, to the
-   graveyard as a normal bronze card) unless its owner has already used 2+
-   Orders this turn. Deferred a beat so it's visibly on the board first. */
+/* Siege Tower's Play: +3 power (a buff -- fires onCardBuffed, buff sfx) if
+   its owner has already used 2+ Orders this turn; otherwise nothing. */
 function resolveSiegeTower(side, card) {
-  if (ordersUsedThisTurn(side) >= 2) return;
-  logMsg(`${card.name} can't hold without 2 Orders used this turn -- it's discarded.`);
-  setTimeout(() => {
-    if (state && findCardOwnerSide(card.uid)) { killCardFromBoard(card, {}, () => render()); render(); }
-  }, 650);
+  if (ordersUsedThisTurn(side) < 2) return;
+  applyPowerDelta(card, 3, { side, card });
+  SFX.buff();
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} gains 3 power.`);
 }
 
 // Blue Stripes Scout's valid refresh targets: another card on its owner's
@@ -3160,9 +3158,10 @@ function applyPowerDelta(card, delta, source) {
      player._buffedAnotherTurn -- that side buffed a card other than the
                                   buffing card itself this turn
    Reactions:
-   - Smith / Berserker (refreshOnBuffed): Order refreshes right away,
-     whenever the card is buffed (capped at BUFF_REFRESH_CAP per card per
-     turn so two Smiths can't ping-pong forever).
+   - Smith / Berserker (refreshOnBuffed): the first time each turn its
+     OWNER's effect buffs it, its Order refreshes (only if used). That first
+     owner-buff consumes the once-per-turn trigger even if the Order was
+     unused at the time.
    - Defender (buffOnOwnerBuffOther): +1 the first time each turn its
      owner buffs a card other than the Defender.
    - Chariot (chariotOnOwnerBuff): the first time each turn its owner's
@@ -3174,7 +3173,6 @@ function applyPowerDelta(card, delta, source) {
    pendingPlayTokenSpawns holds the turn open, player actions are blocked
    (buffReactionsBusy) and the AI waits (buffReactionsIdle). A per-turn cap
    (BUFF_REACTION_CAP) guards against runaway chains. ========================================================= */
-const BUFF_REFRESH_CAP = 3;
 const BUFF_REACTION_CAP = 40;
 const buffReactionQueue = [];
 let buffBatchDepth = 0;
@@ -3208,10 +3206,8 @@ function onCardBuffed(card, amount, sourceSide, sourceCard) {
   const sp = sourceSide && state.players[sourceSide];
   if (sp && (!sourceCard || sourceCard.uid !== card.uid)) sp._buffedAnotherTurn = t;
 
-  if (card.refreshOnBuffed && card.orderUsed) {
-    if (card._buffRefreshTurn !== t) { card._buffRefreshTurn = t; card._buffRefreshN = 0; }
-    if (card._buffRefreshN < BUFF_REFRESH_CAP) {
-      card._buffRefreshN++;
+  if (card.refreshOnBuffed && firstOwnerBuff) {
+    if (card.orderUsed) {
       refreshOrder(card);
       logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} is buffed -- its Order is refreshed.`);
     }
@@ -3296,7 +3292,7 @@ function runBuffReaction(r) {
 function aiBuffTargetScore(c, source) {
   let s = c.power * 0.1;
   const t = state.turnCounter;
-  if (c.refreshOnBuffed && c.orderUsed && (c._buffRefreshTurn !== t || (c._buffRefreshN || 0) < BUFF_REFRESH_CAP)) s += 6;
+  if (c.refreshOnBuffed && c.orderUsed && c._ownerBuffedTurn !== t) s += 6;
   if (c.chariotOnOwnerBuff && c._ownerBuffedTurn !== t) s += 4;
   if (c.tier === 'token') s -= 0.5;
   return s;
@@ -4431,7 +4427,7 @@ function flyRoundEndCards(flights) {
 
 // Rough value of reaching the AI's exactly-2nd Order this turn: Temerian
 // Infantry / Prince Stennis +2 each, a Battering Ram / Foltest's Pride
-// refresh, Ronvid returning from the discard pile, Siege Tower surviving,
+// refresh, Ronvid returning from the discard pile, Siege Tower's +3,
 // a favorable Dethmold discard, Seltkirk's 2 -> 4 upgrade.
 function aiSecondOrderTriggerValue() {
   const ai = state.players.ai;
@@ -4443,7 +4439,7 @@ function aiSecondOrderTriggerValue() {
     if (c.id === 'seltkirk' && isOrderReady('ai', c)) v += 1;
   });
   if (ai.graveyard.some(c => c.returnOnSecondOrder)) v += 3;
-  if (ai.hand.some(c => c.id === 'siege_tower')) v += 4;
+  if (ai.hand.some(c => c.id === 'siege_tower')) v += 3;
   if (ai.hand.some(c => c.playDiscardHighestIfOrders && aiDethmoldDiscardFavorable(c))) v += 3;
   return v;
 }
@@ -5419,9 +5415,6 @@ function decideAiAction() {
     return { action: 'play', uid: aiLeastBadCard(ai.hand).uid };
   }
   let usableHand = scorchOk;
-  // Siege Tower discards itself unless 2+ Orders were used this turn -- never
-  // play it into that (unless it's all that's left).
-  if (ordersUsedThisTurn('ai') < 2) usableHand = usableHand.filter(c => c.id !== 'siege_tower');
   const hand = usableHand.length > 0 ? usableHand : scorchOk;
 
   // A clearly favorable Scorch-like play (burns 4+ more of the player's
@@ -5434,7 +5427,9 @@ function decideAiAction() {
     if (burn) return { action: 'play', uid: burn.c.uid };
   }
 
-  const sorted = [...hand].sort((a, b) => a.power - b.power);
+  // Siege Tower is worth 6 once 2+ Orders were used this turn, else 3.
+  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0);
+  const sorted = [...hand].sort((a, b) => pv(a) - pv(b));
   const weakest = sorted[0];
   const strongest = sorted[sorted.length - 1];
 
@@ -5443,7 +5438,7 @@ function decideAiAction() {
       return { action: 'pass' };
     }
     const needed = oppPower - myPower + 1;
-    const sufficient = sorted.find(c => c.power >= needed);
+    const sufficient = sorted.find(c => pv(c) >= needed);
     if (sufficient) {
       return { action: 'play', uid: sufficient.uid };
     }
@@ -5456,7 +5451,7 @@ function decideAiAction() {
   // won a round: then the AI can't afford to concede this one too, so it
   // keeps fighting no matter how far behind it is.
   const deficit = oppPower - myPower;
-  if (deficit > 0 && deficit > strongest.power) {
+  if (deficit > 0 && deficit > pv(strongest)) {
     const playerAlreadyWonARound = state.roundScores.some(r => r.winner === 'player');
     if (!playerAlreadyWonARound) {
       return { action: 'pass' };

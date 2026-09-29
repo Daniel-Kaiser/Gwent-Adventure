@@ -2097,6 +2097,33 @@ const CARD_DB = {
                                       validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial),
                                       effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
 
+  /* ---- Mahakam golds ---- */
+  // Play AND Order: up to three OTHER cards in play get +1 each (distinct, finish early).
+  percival_schuttenbach: { id: 'percival_schuttenbach', name: 'Percival Schuttenbach', power: 3, tier: 'gold', faction: 'mahakam', img: 'cards/percival_schuttenbach.jpg',
+                       playBuffMulti: 3,
+                       abilities: [ { trigger: 'order', needsTarget: true, multiBuff: 3,
+                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial),
+                                      effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
+  // Play: discard the highest card(s) in play, ignoring its owner's buffed cards.
+  saesenthessis:     { id: 'saesenthessis', name: 'Saesenthessis', power: 2, tier: 'gold', faction: 'mahakam', img: 'cards/saesenthessis.jpg',
+                       abilities: [ { trigger: 'onPlay', effect: resolveSaesenthessis } ] },
+  // Order: double this card's power (a +current-power buff).
+  brouver_hoog:      { id: 'brouver_hoog', name: 'Brouver Hoog', power: 4, tier: 'gold', faction: 'mahakam', img: 'cards/brouver_hoog.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: false, isBuff: true, doublesSelf: true,
+                                      effect: (ctx) => applyPowerDelta(ctx.card, Math.max(0, ctx.card.power), ctx) } ] },
+  // Order: up to two OTHER cards +1. Refreshes the first time its owner buffs it each turn.
+  eudora_breckenriggs: { id: 'eudora_breckenriggs', name: 'Eudora Breckenriggs', power: 5, tier: 'gold', faction: 'mahakam', img: 'cards/eudora_breckenriggs.jpg', refreshOnBuffed: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, multiBuff: 2,
+                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial),
+                                      effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
+  // Play AND Order: +4 to a card in play (itself included).
+  harald_gord:       { id: 'harald_gord', name: 'Harald Gord', power: 1, tier: 'gold', faction: 'mahakam', img: 'cards/harald_gord.jpg',
+                       playBuffRepeat: 1, playBuffAmount: 4, playBuffIncludeSelf: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isBuff: true, amount: 4, effect: (ctx, target) => applyPowerDelta(target, 4, ctx) } ] },
+  // Play (may): deal 3 damage. Order: +3 to another card in play.
+  milva:             { id: 'milva', name: 'Milva', power: 3, tier: 'gold', faction: 'mahakam', img: 'cards/milva.jpg', playTargetDamage: 3,
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, amount: 3, effect: (ctx, target) => applyPowerDelta(target, 3, ctx) } ] },
+
   /* ---- Northern Realms silvers ---- */
   // Order: play a Bronze unit (non-token, non-special, printed power >= 1)
   // from its owner's discard pile, same picker/AI pick as Vysogota; the
@@ -2399,6 +2426,8 @@ const CARD_VOICE_LINES = {
     { url: 'sfx/roach_snort.mp3', text: '[...]' },
   ],
 };
+// Saesenthessis ("Saskia") is the same dragon as Villentretenmerth -- same lines.
+CARD_VOICE_LINES.saesenthessis = CARD_VOICE_LINES.villentretenmerth;
 // Set briefly by a deferred voice line (Yennefer) so the card she revives
 // waits for her line to finish before speaking its own.
 let pendingVoiceLineGate = null;
@@ -3421,6 +3450,8 @@ function aiBuffTargetScore(c, source) {
   // its once-per-turn refresh for nothing
   if (c.refreshOnBuffed && !c.orderUsed && findOrderAbility(c) && c._ownerBuffedTurn !== t) s -= 3;
   if (c.tier === 'token') s -= 0.5;
+  // Brouver Hoog doubles his power with his Order: buffs on him first count twice
+  if (c.id === 'brouver_hoog' && !c.orderUsed) s += 3;
   // Sheldon Skaggs' ready Order hits for his power (max 6)
   if (c.id === 'sheldon_skaggs' && !c.orderUsed && c.power < 6) s += 1;
   // Paulie Dahlberg in the AI's discard pile: a buff on a card not yet
@@ -3937,6 +3968,27 @@ function resolveAlzursThunder(ctx) {
    card and stays on the board afterward, UNLESS it's itself tied for the
    highest power, in which case it counts among the cards discarded just
    like any other. */
+/* Saesenthessis' Play: every card on its owner's side that is currently
+   buffed (power > basePower) is left out; among everything else in play
+   (both boards, herself included), all cards tied for the highest power
+   are discarded. */
+function saesenthessisPool(side) {
+  const pool = [];
+  ['player', 'ai'].forEach(s => state.players[s].board.forEach(c => {
+    if (c.floatingSpecial) return;
+    if (s === side && c.basePower !== undefined && c.power > c.basePower) return;
+    pool.push({ side: s, card: c });
+  }));
+  return pool;
+}
+function resolveSaesenthessis(ctx) {
+  const pool = saesenthessisPool(ctx.side);
+  if (pool.length === 0) return;
+  const maxPower = Math.max(...pool.map(x => x.card.power));
+  const targets = pool.filter(x => x.card.power === maxPower);
+  logMsg(`Saesenthessis discards ${targets.map(t => t.card.name).join(', ')} (${maxPower} power).`);
+  burnCardsInPlay(targets.map(t => t.card));
+}
 function resolveVillentretenmerth(ctx) {
   const inPlay = [];
   ['player', 'ai'].forEach(side => {
@@ -4780,7 +4832,7 @@ function aiPickNextOrderCard(candidates) {
   // buffs, since his damage grows with his power.)
   // (Smith / Berserker / Figgis / Xavier go before other buff Orders, so a
   // buff can land on them AFTER their Order is spent and refresh it.)
-  const rank = c => c.refreshOnSecondOrder ? 0 : c.refreshOnBuffed ? 0.5 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
+  const rank = c => c.refreshOnSecondOrder ? 0 : c.refreshOnBuffed ? 0.5 : c.id === 'brouver_hoog' ? 3 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
   return candidates.slice().sort((a, b) => rank(a) - rank(b))[0];
 }
 
@@ -4848,6 +4900,7 @@ function aiOrderBestValue(c) {
   const a = findOrderAbility(c);
   if (!a) return 0;
   if (a.isScorch) return Math.max(0, ...state.players.player.board.map(e => e.power)) * 2;
+  if (a.doublesSelf) return Math.max(6, c.power * 4);
   if (a.isDamage) return Math.max(a.amount || 0, c.id === 'seltkirk' ? 4 : 0, a.amountFn ? 6 : 0);
   if (a.isDiscardPlay) return Math.max(0, ...state.players.ai.graveyard.map(g => g.power)) + 6;
   if (a.isRefresh) return 6 * (a.multiRefresh || 1);
@@ -4868,7 +4921,7 @@ function aiMaxSwingUpperBound() {
     b += Math.max(0, c.power);
     b += (c.playTargetDamage || 0) + (c.playDamagePlusOrdersUsed ? 6 : 0) + (c.playDamageFromDeckTop ? 10 : 0);
     b += (c.playBuffRepeat || 0) * (c.playBuffAmount || 1) + (c.playBuffMulti || 0) + (c.id === 'siege_tower' ? 3 : 0);
-    if (c.special || c.id === 'villentretenmerth' || c.playDiscardHighestIfOrders) b += topEnemyTotal + 10;
+    if (c.special || c.id === 'villentretenmerth' || c.id === 'saesenthessis' || c.playDiscardHighestIfOrders) b += topEnemyTotal + 10;
     if (c.discardChoice) b += graveMax + 10;
     if (c.playRefreshOrder || c.playRefreshMulti) b += 6 * (c.playRefreshMulti || 1);
     if (c.playMoveOnePower) b += 2;
@@ -4927,6 +4980,10 @@ async function aiUseAvailableOrders(opts) {
     const readyCard = aiPickNextOrderCard(readyAll);
     if (!readyCard) break;
     const ability = findOrderAbility(readyCard);
+
+    // Brouver Hoog: hold the doubling while a buff Play in hand could land
+    // on him first (it's used after the play -- see aiTakeTurn)
+    if (ability.doublesSelf && opts.plan && ai.hand.some(c => c.playBuffRepeat || c.playBuffMulti)) { heldBack.add(readyCard.uid); continue; }
 
     if (ability.isDiscardPlay) {
       const predicate = c => c.tier === ability.tier && (!ability.filter || ability.filter(c));
@@ -5697,7 +5754,7 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
    { enemy, own } -- the total power the player / the AI would lose -- or
    null if the card isn't Scorch-like right now. */
 function aiIsScorchLike(card) {
-  return card.id === 'scorch' || card.id === 'villentretenmerth' || dethmoldDiscardActive('ai', card);
+  return card.id === 'scorch' || card.id === 'villentretenmerth' || card.id === 'saesenthessis' || dethmoldDiscardActive('ai', card);
 }
 function aiScorchOutcome(card, assumeActive) {
   if (!assumeActive && !aiIsScorchLike(card)) return null;
@@ -5715,7 +5772,10 @@ function aiScorchOutcome(card, assumeActive) {
     // with power > 0 count.
     pool = all.slice();
     if (!state.players.ai.board.some(c => c.uid === card.uid)) pool.push({ c: card, own: true });
-    if (card.id !== 'villentretenmerth') pool = pool.filter(x => x.c.power > 0 && !x.c.floatingSpecial);
+    if (card.id === 'saesenthessis') {
+      // the AI's own buffed cards are spared (the played card itself is unbuffed)
+      pool = pool.filter(x => !x.c.floatingSpecial && !(x.own && x.c.basePower !== undefined && x.c.power > x.c.basePower));
+    } else if (card.id !== 'villentretenmerth') pool = pool.filter(x => x.c.power > 0 && !x.c.floatingSpecial);
   }
   if (pool.length === 0) return { enemy: 0, own: 0 };
   const max = Math.max(...pool.map(x => x.c.power));
@@ -5772,6 +5832,7 @@ function aiBestRefreshPlay(hand) {
       if (n > 0) cands.push({ c, v: 10 + n });
     }
     if (findOrderAbility(c) && ai.board.some(d => d.refreshOnOrderCardPlay && d.orderUsed && worth(d))) cands.push({ c, v: 5 });
+    if ((c.playBuffRepeat || c.playBuffMulti) && ai.board.some(d => d.id === 'brouver_hoog' && isOrderReady('ai', d))) cands.push({ c, v: 4 });
     if ((c.playBuffRepeat || c.playBuffMulti) && ai.board.some(d => d.refreshOnBuffed && d.orderUsed && d._ownerBuffedTurn !== t && worth(d))) cands.push({ c, v: 6 });
   });
   if (cands.length === 0) return null;

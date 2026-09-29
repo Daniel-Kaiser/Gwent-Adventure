@@ -1923,7 +1923,7 @@ const CARD_DB = {
   geralt:            { id: 'geralt', name: 'Geralt of Rivia', power: 8, tier: 'gold', img: 'cards/geralt.jpg', abilities: [] },
 
   wagon:             { id: 'wagon', name: 'Wagon', power: 2, tier: 'bronze', img: 'cards/wagon.jpg',
-                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, effect: (ctx, target) => applyPowerDelta(target, 3) } ] },
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, effect: (ctx, target) => applyPowerDelta(target, 3, ctx) } ] },
   highwayman:        { id: 'highwayman', name: 'Highwayman', power: 2, tier: 'bronze', img: 'cards/highwayman.jpg', abilities: [], playTargetDamage: 2 },
   mercenary_mauler:  { id: 'mercenary_mauler', name: 'Mercenary Mauler', power: 1, tier: 'bronze', img: 'cards/mercenary_mauler.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 4, effect: (ctx, target) => applyDamage(target, 4) } ] },
@@ -1937,13 +1937,13 @@ const CARD_DB = {
   dandelion:         { id: 'dandelion', name: 'Dandelion', power: 3, tier: 'silver', img: 'cards/dandelion.jpg',
                        deckTopChoice: true,
                        abilities: [
-                         { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 3) },
+                         { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 3, ctx) },
                        ] },
   field_medic:       { id: 'field_medic', name: 'Field Medic', power: 2, tier: 'bronze', img: 'cards/field_medic.jpg',
                        abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze',
                                       filter: c => !c.special && c.power >= 1 } ] },
   zoltan_chivay:     { id: 'zoltan_chivay', name: 'Zoltan Chivay', power: 2, tier: 'silver', img: 'cards/zoltan_chivay.jpg', playTargetDamage: 2,
-                       abilities: [ { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 2) } ] },
+                       abilities: [ { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 2, ctx) } ] },
   caretaker:         { id: 'caretaker', name: 'Caretaker', power: 2, tier: 'silver', img: 'cards/caretaker.jpg', abilities: [],
                        discardChoice: 'bronze' },
   roach:             { id: 'roach', name: 'Roach', power: 2, tier: 'silver', img: 'cards/roach.jpg',
@@ -1962,7 +1962,7 @@ const CARD_DB = {
                        abilities: [ { trigger: 'onPlay', effect: resolveScorch } ] },
 
   angouleme:         { id: 'angouleme', name: 'Angoulême', power: 2, tier: 'silver', img: 'cards/angouleme.jpg',
-                       abilities: [ { trigger: 'order', needsTarget: false, effect: (ctx) => applyPowerDelta(ctx.card, 6) } ] },
+                       abilities: [ { trigger: 'order', needsTarget: false, effect: (ctx) => applyPowerDelta(ctx.card, 6, ctx) } ] },
   // Play: Look at the top card of your deck. Deal damage equal to its power.
   // (see startDeckTopDamage -- reveals the top card beside its owner's deck
   // pile during targeting; the card stays on top of the deck)
@@ -1998,7 +1998,7 @@ const CARD_DB = {
                        playRefreshOrder: true },
   kaedweni_cavalry:  { id: 'kaedweni_cavalry', name: 'Kaedweni Cavalry', power: 3, tier: 'bronze', faction: 'northern_realms', img: 'cards/kaedweni_cavalry.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true,
-                                      effect: (ctx, target) => { applyPowerDelta(target, 1); createTokensRightOf(ctx.side, ctx.card, 'soldier_token', 1); } } ] },
+                                      effect: (ctx, target) => { applyPowerDelta(target, 1, ctx); createTokensRightOf(ctx.side, ctx.card, 'soldier_token', 1); } } ] },
   kaedweni_sergeant: { id: 'kaedweni_sergeant', name: 'Kaedweni Sergeant', power: 1, tier: 'bronze', faction: 'northern_realms', img: 'cards/kaedweni_sergeant.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'soldier_token', 2) } ] },
   poor_fucking_infantry: { id: 'poor_fucking_infantry', name: 'Poor Fucking Infantry', power: 3, tier: 'bronze', faction: 'northern_realms', img: 'cards/poor_fucking_infantry.jpg',
@@ -2011,12 +2011,46 @@ const CARD_DB = {
   // see refreshOnOrderCardEntered().
   temerian_drummer:  { id: 'temerian_drummer', name: 'Temerian Drummer', power: 2, tier: 'bronze', faction: 'northern_realms', img: 'cards/temerian_drummer.jpg',
                        refreshOnOrderCardPlay: true,
-                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, effect: (ctx, target) => applyPowerDelta(target, 1) } ] },
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
   // Order: deal 1. Passive: +2 power when its owner uses exactly their 2nd
   // Order in a turn (its own included) -- see noteOrderUsed().
   temerian_infantry: { id: 'temerian_infantry', name: 'Temerian Infantry', power: 2, tier: 'bronze', faction: 'northern_realms', img: 'cards/temerian_infantry.jpg',
                        buffOnSecondOrder: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  /* ---- Dwarves (faction: 'scoiatael') -- bronze batch. Buff reactions
+     (Defender / Smith / Berserker / Chariot) hang off onCardBuffed(). ---- */
+  // Play (may) AND Order: deal 2 damage.
+  dwarven_skirmisher: { id: 'dwarven_skirmisher', name: 'Dwarven Skirmisher', power: 1, tier: 'bronze', faction: 'scoiatael', img: 'cards/dwarven_skirmisher.jpg', playTargetDamage: 2,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
+  // Play: +1 to another card in play, then again (two sequential picks, the
+  // same card may be picked twice). Order: deal 1 damage.
+  mahakam_adventurer: { id: 'mahakam_adventurer', name: 'Mahakam Adventurer', power: 2, tier: 'bronze', faction: 'scoiatael', img: 'cards/mahakam_adventurer.jpg', playBuffRepeat: 2,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Order: deal 1. Passive: +1 the first time each turn its owner buffs another card.
+  mahakam_defender:  { id: 'mahakam_defender', name: 'Mahakam Defender', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/mahakam_defender.jpg', buffOnOwnerBuffOther: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Play (may) AND Order: +1 to another card in play.
+  mahakam_guard:     { id: 'mahakam_guard', name: 'Mahakam Guard', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/mahakam_guard.jpg', playBuffRepeat: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
+  // Order: +1 to another card. Its Order refreshes whenever it gets buffed.
+  mahakam_smith:     { id: 'mahakam_smith', name: 'Mahakam Smith', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/mahakam_smith.jpg', refreshOnBuffed: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
+  // Order: discard the highest card(s) in play (both boards, itself if tied).
+  pyrotechnician:    { id: 'pyrotechnician', name: 'Pyrotechnician', power: 1, tier: 'bronze', faction: 'scoiatael', img: 'cards/pyrotechnician.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: false, isScorch: true, effect: (ctx) => resolveHighestDiscardOrder(ctx.side, ctx.card) } ] },
+  // Play: up to 3 other distinct cards in play get +1 (Troubadour-style multi pick).
+  rowdy_dwarf:       { id: 'rowdy_dwarf', name: 'Rowdy Dwarf', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/rowdy_dwarf.jpg', abilities: [], playBuffMulti: 3 },
+  // Order: deal 1. Its Order refreshes whenever it gets buffed.
+  dwarf_berserker:   { id: 'dwarf_berserker', name: 'Dwarf Berserker', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/dwarf_berserker.jpg', refreshOnBuffed: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Passive: the first time each turn its owner's effects buff it, its owner
+  // gives another card +1.
+  dwarven_chariot:   { id: 'dwarven_chariot', name: 'Dwarven Chariot', power: 4, tier: 'bronze', faction: 'scoiatael', img: 'cards/dwarven_chariot.jpg', chariotOnOwnerBuff: 1, abilities: [] },
+  // Play (may): move a card in play with exactly 1 power to the other side.
+  // Order: +1 to a card in play (itself included).
+  dwarven_mercenary: { id: 'dwarven_mercenary', name: 'Dwarven Mercenary', power: 3, tier: 'bronze', faction: 'scoiatael', img: 'cards/dwarven_mercenary.jpg', playMoveOnePower: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
+
   /* ---- Northern Realms silvers ---- */
   // Order: play a Bronze unit (non-token, non-special, printed power >= 1)
   // from its owner's discard pile, same picker/AI pick as Vysogota; the
@@ -2613,7 +2647,9 @@ function drawCards(side, n) {
   const p = state.players[side];
   let drew = 0;
   for (let i = 0; i < n && p.deck.length > 0; i++) {
-    p.hand.push(p.deck.pop());
+    const c = p.deck.pop();
+    if (!c.owner) c.owner = side; // original owner -- see sendToGraveyard
+    p.hand.push(c);
     drew++;
   }
   if (drew > 0) SFX.cardDraw();
@@ -2734,7 +2770,7 @@ function noteOrderUsed(side) {
     // of the turn (one buff clip for however many fire together)
     const secondOrderBuffers = p.board.filter(c => c.buffOnSecondOrder);
     secondOrderBuffers.forEach(c => {
-      applyPowerDelta(c, c.buffOnSecondOrder);
+      applyPowerDelta(c, c.buffOnSecondOrder, { side, card: c });
       logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name} gains ${c.buffOnSecondOrder} power.`);
     });
     if (secondOrderBuffers.length) SFX.buff();
@@ -2961,6 +2997,7 @@ function createTokensRightOf(side, sourceCard, tokenId, count) {
     const t = createToken(tokenId);
     t.playedTurn = state.turnCounter;
     t.orderUsed = false;
+    t.owner = side;
     t._justCreated = true;
     board.splice(idx + 1 + i, 0, t);
     created.push(t);
@@ -3090,10 +3127,282 @@ function effectivePlayDamage(side, card) {
    (and any future "revert to base" effects) can compare against it.
    Any card ability that changes power -- on any trigger -- should route
    through this rather than touching card.power directly. */
-function applyPowerDelta(card, delta) {
+// `source` ({ side, card }, e.g. an ability ctx) names who applied a buff;
+// omitted, a positive delta counts as the card buffing itself. A positive
+// delta is a "buff" and fires onCardBuffed (the end-of-turn heal back to
+// base never goes through here).
+function applyPowerDelta(card, delta, source) {
   if (card.basePower === undefined) card.basePower = card.power;
   card.power += delta;
   showFloatingDelta(card.uid, delta);
+  if (delta > 0) {
+    const side = (source && source.side) || findCardOwnerSide(card.uid);
+    onCardBuffed(card, delta, side, (source && source.card) || card);
+  }
+}
+
+/* =========================================================
+   BUFF EVENTS (dwarves)
+   onCardBuffed(card, amount, sourceSide, sourceCard) runs right after each
+   buff is applied (i.e. after its projectile has landed). "Owner" here is
+   the side a card is currently on (its controller -- see Dwarven
+   Mercenary). Per-turn flags are turnCounter stamps, so they reset by
+   themselves whenever a new turn starts:
+     card._buffedTurn          -- buffed at all this turn
+     card._ownerBuffedTurn     -- buffed by its owner's effect this turn
+     player._buffedAnotherTurn -- that side buffed a card other than the
+                                  buffing card itself this turn
+   Reactions:
+   - Smith / Berserker (refreshOnBuffed): Order refreshes right away,
+     whenever the card is buffed (capped at BUFF_REFRESH_CAP per card per
+     turn so two Smiths can't ping-pong forever).
+   - Defender (buffOnOwnerBuffOther): +1 the first time each turn its
+     owner buffs a card other than the Defender.
+   - Chariot (chariotOnOwnerBuff): the first time each turn its owner's
+     effect buffs it, its owner gives another card +1 (player: targeting
+     noodle, may cancel; AI: auto-pick).
+   Defender/Chariot reactions are queued and resolved one at a time, only
+   once the effect that caused them has finished (no targeting session
+   open, no multi-buff batch in progress). While any are queued,
+   pendingPlayTokenSpawns holds the turn open, player actions are blocked
+   (buffReactionsBusy) and the AI waits (buffReactionsIdle). A per-turn cap
+   (BUFF_REACTION_CAP) guards against runaway chains. ========================================================= */
+const BUFF_REFRESH_CAP = 3;
+const BUFF_REACTION_CAP = 40;
+const buffReactionQueue = [];
+let buffBatchDepth = 0;
+let buffReactionProcessing = false;
+let buffReactionTally = { turn: -1, n: 0 };
+function buffReactionsBusy() { return buffReactionProcessing || buffReactionQueue.length > 0; }
+function beginBuffBatch() { buffBatchDepth++; }
+function endBuffBatch() { buffBatchDepth = Math.max(0, buffBatchDepth - 1); scheduleBuffReactions(); }
+function buffReactionsIdle() {
+  return new Promise(resolve => {
+    const check = () => { if (!buffReactionsBusy()) resolve(); else setTimeout(check, 50); };
+    check();
+  });
+}
+function enqueueBuffReaction(r) {
+  if (!state) return;
+  if (buffReactionTally.turn !== state.turnCounter) buffReactionTally = { turn: state.turnCounter, n: 0 };
+  if (buffReactionTally.n >= BUFF_REACTION_CAP) return;
+  buffReactionTally.n++;
+  buffReactionQueue.push(r);
+}
+function onCardBuffed(card, amount, sourceSide, sourceCard) {
+  if (!state || state.phase !== 'playing' || !(amount > 0)) return;
+  const side = findCardOwnerSide(card.uid);
+  if (!side) return;
+  const t = state.turnCounter;
+  card._buffedTurn = t;
+  const byOwner = sourceSide === side;
+  const firstOwnerBuff = byOwner && card._ownerBuffedTurn !== t;
+  if (byOwner) card._ownerBuffedTurn = t;
+  const sp = sourceSide && state.players[sourceSide];
+  if (sp && (!sourceCard || sourceCard.uid !== card.uid)) sp._buffedAnotherTurn = t;
+
+  if (card.refreshOnBuffed && card.orderUsed) {
+    if (card._buffRefreshTurn !== t) { card._buffRefreshTurn = t; card._buffRefreshN = 0; }
+    if (card._buffRefreshN < BUFF_REFRESH_CAP) {
+      card._buffRefreshN++;
+      refreshOrder(card);
+      logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} is buffed -- its Order is refreshed.`);
+    }
+  }
+  if (card.chariotOnOwnerBuff && firstOwnerBuff) {
+    enqueueBuffReaction({ type: 'chariot', uid: card.uid });
+  }
+  if (sp) {
+    sp.board.forEach(d => {
+      if (d.buffOnOwnerBuffOther && d.uid !== card.uid && d._defenderTurn !== t) {
+        d._defenderTurn = t;
+        enqueueBuffReaction({ type: 'defender', uid: d.uid });
+      }
+    });
+  }
+  scheduleBuffReactions();
+}
+function scheduleBuffReactions() {
+  if (buffReactionProcessing || buffReactionQueue.length === 0) return;
+  buffReactionProcessing = true;
+  pendingPlayTokenSpawns++;
+  setTimeout(processNextBuffReaction, 250);
+}
+async function processNextBuffReaction() {
+  if (!state || state.phase !== 'playing') buffReactionQueue.length = 0;
+  if (buffReactionQueue.length > 0 && (buffBatchDepth > 0 || activeTargeting)) {
+    setTimeout(processNextBuffReaction, 80); // let the causing effect finish first
+    return;
+  }
+  const r = buffReactionQueue.shift();
+  if (!r) {
+    buffReactionProcessing = false;
+    pendingPlayTokenSpawns--;
+    if (state) {
+      render();
+      if (state.phase === 'playing' && state.activeTurn === 'player') maybeAutoEndTurn('player');
+    }
+    return;
+  }
+  try { await runBuffReaction(r); } catch (e) { console.error(e); }
+  setTimeout(processNextBuffReaction, 200);
+}
+function runBuffReaction(r) {
+  return new Promise(resolve => {
+    const card = findCardByUid(r.uid);
+    const side = card && findCardOwnerSide(card.uid);
+    if (!card || !side) { resolve(); return; }
+    const who = side === 'player' ? 'Your' : "Opponent's";
+    if (r.type === 'defender') {
+      logMsg(`${who} ${card.name} gains ${card.buffOnOwnerBuffOther} power.`);
+      applyPowerDelta(card, card.buffOnOwnerBuffOther, { side, card });
+      SFX.buff();
+      render();
+      resolve();
+      return;
+    }
+    if (r.type === 'chariot') {
+      const others = [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial);
+      if (others.length === 0) { resolve(); return; }
+      if (side === 'player') {
+        logMsg(`Your ${card.name} lets you give another card +1.`);
+        startTargeting({ side: 'player', card, kind: 'reactionBuff', excludeSelf: true, amount: card.chariotOnOwnerBuff,
+                         onDone: () => { render(); resolve(); } });
+      } else {
+        const target = aiPickBuffTarget(card, true);
+        if (!target) { resolve(); return; }
+        shootProjectile(card.uid, target.uid, () => {
+          applyPowerDelta(target, card.chariotOnOwnerBuff, { side, card });
+          logMsg(`Opponent's ${card.name} gives ${target.name} +${card.chariotOnOwnerBuff}.`);
+          render();
+          resolve();
+        }, 'buff');
+      }
+      return;
+    }
+    resolve();
+  });
+}
+// AI: best own card to buff with `source` -- prefers a buff that sets off a
+// reaction (Smith/Berserker with a used Order, a Chariot not yet triggered
+// this turn), then its strongest card.
+function aiBuffTargetScore(c, source) {
+  let s = c.power * 0.1;
+  const t = state.turnCounter;
+  if (c.refreshOnBuffed && c.orderUsed && (c._buffRefreshTurn !== t || (c._buffRefreshN || 0) < BUFF_REFRESH_CAP)) s += 6;
+  if (c.chariotOnOwnerBuff && c._ownerBuffedTurn !== t) s += 4;
+  if (c.tier === 'token') s -= 0.5;
+  return s;
+}
+// Distinct targets for a multi-pick buff (Troubadour / Rowdy Dwarf).
+function aiPickMultiBuffTargets(source, n) {
+  return state.players.ai.board.filter(c => c.uid !== source.uid && !c.floatingSpecial)
+    .sort((a, b) => aiBuffTargetScore(b, source) - aiBuffTargetScore(a, source)).slice(0, n);
+}
+function aiPickBuffTarget(source, excludeSelf, side) {
+  side = side || 'ai';
+  const pool = state.players[side].board.filter(c => !c.floatingSpecial && (!excludeSelf || c.uid !== source.uid));
+  if (pool.length === 0) return null;
+  return pool.slice().sort((a, b) => aiBuffTargetScore(b, source) - aiBuffTargetScore(a, source))[0];
+}
+
+/* ---- Mahakam Adventurer / Mahakam Guard: "give another card in play +1"
+   `n` times in a row, one pick at a time (the same card may be picked
+   again). Player: targeting noodle per pick; backing out (confirm) ends
+   the rest. AI: own cards only. The whole sequence is one buff batch, so
+   reactions (Chariot, Defender) wait until it's done. */
+function startSequentialBuffPicks(side, card, n, notifyInfo, onDone) {
+  return new Promise(resolve => {
+    const liveCard = state.players[side].board.find(c => c.uid === card.uid) || card;
+    beginBuffBatch();
+    const finish = () => {
+      endBuffBatch();
+      if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      render();
+      if (onDone) onDone();
+      if (side === 'player') maybeAutoEndTurn('player');
+      resolve();
+    };
+    let left = n;
+    const next = () => {
+      if (left <= 0 || !state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
+      const others = [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== liveCard.uid && !c.floatingSpecial);
+      if (others.length === 0) { finish(); return; }
+      left--;
+      if (side === 'player') {
+        startTargeting({ side: 'player', card: liveCard, kind: 'playBuffSeq', excludeSelf: true,
+                         onPicked: next, onCancel: finish });
+      } else {
+        const target = aiPickBuffTarget(liveCard, true);
+        if (!target) { finish(); return; }
+        setTimeout(() => shootProjectile(liveCard.uid, target.uid, () => {
+          applyPowerDelta(target, 1, { side, card: liveCard });
+          logMsg(`Opponent's ${liveCard.name} gives ${target.name} +1.`);
+          render();
+          next();
+        }, 'buff'), 300);
+      }
+    };
+    next();
+  });
+}
+
+/* ---- Dwarven Mercenary: move a card in play with exactly 1 power to the
+   other side (end of that row, sliding across). The card keeps its
+   original owner (card.owner): whenever it leaves play it goes to THAT
+   side's discard pile (sendToGraveyard). While moved, it counts for the
+   side it's on, and that side controls its Order. ---- */
+function mercenaryMoveTargets(card) {
+  return [...state.players.player.board, ...state.players.ai.board]
+    .filter(c => c.uid !== card.uid && !c.floatingSpecial && c.power === 1);
+}
+function moveCardToOtherSide(target, onDone) {
+  const from = findCardOwnerSide(target.uid);
+  if (!from) { if (onDone) onDone(); return; }
+  const to = otherSide(from);
+  const oldEl = document.querySelector(`.side .card[data-uid="${target.uid}"]`) || document.querySelector(`#${from === 'player' ? 'playerSide' : 'oppSide'} .card[data-uid="${target.uid}"]`);
+  const fromRect = oldEl ? oldEl.getBoundingClientRect() : null;
+  const fb = state.players[from].board;
+  fb.splice(fb.findIndex(c => c.uid === target.uid), 1);
+  state.players[to].board.push(target);
+  logMsg(`${target.name} is moved to ${to === 'player' ? 'your' : "the opponent's"} side.`);
+  render();
+  const newEl = document.querySelector(`#${to === 'player' ? 'playerSide' : 'oppSide'} .card[data-uid="${target.uid}"]`);
+  if (fromRect && newEl) {
+    SFX.place();
+    const toRect = newEl.getBoundingClientRect();
+    newEl.style.visibility = 'hidden';
+    flyCard(target, fromRect, toRect, () => { newEl.style.visibility = ''; render(); if (onDone) onDone(); });
+  } else if (onDone) onDone();
+}
+function aiPickMercenaryTarget(card) {
+  const enemy = mercenaryMoveTargets(card).filter(c => findCardOwnerSide(c.uid) === 'player');
+  if (enemy.length === 0) return null;
+  const score = c => (findOrderAbility(c) && !c.orderUsed ? 10 : 0) + (c.tier === 'token' ? 0 : 1);
+  return enemy.slice().sort((a, b) => score(b) - score(a))[0];
+}
+function startMercenaryMove(side, card, notifyInfo, onDone) {
+  return new Promise(resolve => {
+    const liveCard = state.players[side].board.find(c => c.uid === card.uid) || card;
+    const finish = () => {
+      if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      render();
+      if (onDone) onDone();
+      if (side === 'player') maybeAutoEndTurn('player');
+      resolve();
+    };
+    const targets = mercenaryMoveTargets(liveCard);
+    if (targets.length === 0) { finish(); return; }
+    if (side === 'player') {
+      const valid = new Set(targets.map(c => c.uid));
+      startTargeting({ side: 'player', card: liveCard, kind: 'playMove', notifyInfo,
+                       filter: c => valid.has(c.uid), onDone: () => resolve() });
+    } else {
+      const t = aiPickMercenaryTarget(liveCard);
+      if (!t) { finish(); return; }
+      setTimeout(() => moveCardToOtherSide(t, finish), 400);
+    }
+  });
 }
 
 /* A floating "+2" / "-1" that appears over a card for about a second
@@ -3146,10 +3455,18 @@ function resetFieldEffects(card) {
 
 // Moves a card into a graveyard, resetting any effects it picked up while
 // on the battlefield first.
+// A card always goes to its ORIGINAL owner's discard pile (card.owner),
+// even if it left play from the other side of the board (Dwarven
+// Mercenary); `side` is only the fallback for cards without an owner tag.
+function cardOwner(card, fallbackSide) {
+  return (card && (card.owner === 'player' || card.owner === 'ai')) ? card.owner : fallbackSide;
+}
 function sendToGraveyard(side, card) {
   resetFieldEffects(card);
   if (card.tier === 'token') return; // tokens just vanish -- never in a discard pile
-  state.players[side].graveyard.push(card);
+  const owner = cardOwner(card, side);
+  card.owner = owner;
+  state.players[owner].graveyard.push(card);
 }
 
 /* =========================================================
@@ -3288,7 +3605,7 @@ function killCardFromBoard(card, opts, onDone) {
     logMsg(`${card.name} is destroyed!`);
     if (card.tier === 'token') { if (liveEl) liveEl.style.visibility = 'hidden'; if (onDone) onDone(); return; } // vanishes, no flight to the discard pile
     if (liveEl) {
-      const pileEl = document.getElementById(side === 'player' ? 'discardPileMe' : 'discardPileOpp');
+      const pileEl = document.getElementById(cardOwner(card, side) === 'player' ? 'discardPileMe' : 'discardPileOpp');
       if (pileEl) {
         const fromRect = liveEl.getBoundingClientRect();
         const toRect = pileEl.getBoundingClientRect();
@@ -3356,7 +3673,7 @@ function buffTridamInfantry(card, info) {
   // "played on an earlier turn" guard Order abilities use (isOrderReady).
   if (card.playedTurn === undefined || state.turnCounter <= card.playedTurn) return;
   if (info.isFirstPlayThisTurn) {
-    applyPowerDelta(card, 1);
+    applyPowerDelta(card, 1, { side: info.side, card });
     SFX.buff();
   }
 }
@@ -4010,13 +4327,16 @@ function endRound() {
     const p = state.players[side];
     const lost = winner !== side;
     p.board.forEach(card => {
+      // a card moved across the board (Dwarven Mercenary) still belongs to
+      // its original owner: their round result, their hand/discard pile
+      const owner = cardOwner(card, side);
       const rule = card.abilities && card.abilities.find(a => a.event === 'roundEndFate');
-      const fate = rule ? rule.effect(card, { lost, side, state }) : 'graveyard';
+      const fate = rule ? rule.effect(card, { lost: winner !== owner, side: owner, state }) : 'graveyard';
       const flight = flights.find(f => f.side === side && f.snapshot.uid === card.uid);
-      if (flight) flight.dest = fate;
+      if (flight) { flight.dest = fate; flight.owner = owner; }
       if (fate === 'hand') {
         resetFieldEffects(card);
-        p.hand.push(card);
+        state.players[owner].hand.push(card);
         logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} returns to hand.`);
       } else {
         sendToGraveyard(side, card);
@@ -4069,7 +4389,8 @@ function endRound() {
    real state/DOM is already updated by the time this runs; these are
    purely decorative clones layered on top. */
 function flyRoundEndCards(flights) {
-  flights.forEach(({ side, snapshot, fromRect, dest }) => {
+  flights.forEach(({ side: boardSide, snapshot, fromRect, dest, owner }) => {
+    const side = owner || boardSide; // destination = the card's original owner
     if (snapshot.tier === 'token') return; // tokens just vanish, no fly-out
     let toRect = null;
     if (dest === 'hand') {
@@ -4369,10 +4690,10 @@ async function aiUseAvailableOrders(opts) {
       const useful = ta && (!ta.isDamage || state.players.player.board.some(e => e.power > 0 && e.power <= orderDamageAmount('ai', target, ta)));
       if (!target || (!useful && !aiWantsSecondOrder(readyAll.length))) { heldBack.add(readyCard.uid); continue; }
     } else if (ability.needsTarget) {
-      // buffs a chosen ally (e.g. Zoltan Chivay, Kaedweni Cavalry) -- pick
-      // the strongest one (never itself if the ability excludes that)
-      const pool = ability.excludeSelf ? ai.board.filter(c => c.uid !== readyCard.uid) : ai.board;
-      target = pool.slice().sort((a, b) => b.power - a.power)[0] || (ability.excludeSelf ? null : readyCard);
+      // buffs a chosen ally (e.g. Zoltan Chivay, Kaedweni Cavalry) -- one
+      // that sets off a buff reaction first (Smith/Berserker refresh,
+      // Chariot), else the strongest (never itself if the ability excludes that)
+      target = aiPickBuffTarget(readyCard, !!ability.excludeSelf) || (ability.excludeSelf ? null : readyCard);
       if (!target) { heldBack.add(readyCard.uid); continue; }
     } else {
       // self-only Order (e.g. Angoulême buffing herself) -- never aim it at some
@@ -4384,6 +4705,7 @@ async function aiUseAvailableOrders(opts) {
       applyOrderAbility('ai', readyCard, ability, target, resolve);
     });
     render();
+    await buffReactionsIdle();
     await delay(500);
   }
 }
@@ -4522,16 +4844,26 @@ async function aiTakeTurn() {
       // cards free power. Buffs up to the ability's max, its own other
       // cards first (never itself).
       const liveCard = state.players.ai.board.find(c => c.uid === cardData.uid) || cardData;
-      const ownTargets = state.players.ai.board.filter(c => c.uid !== liveCard.uid).slice(0, cardData.playBuffMulti);
+      const ownTargets = aiPickMultiBuffTargets(liveCard, cardData.playBuffMulti);
       if (ownTargets.length > 0) {
         await delay(500);
+        beginBuffBatch();
         for (const t of ownTargets) {
           await new Promise(resolve => {
-            shootProjectile(liveCard.uid, t.uid, () => { applyPowerDelta(t, 1); render(); resolve(); }, 'buff');
+            shootProjectile(liveCard.uid, t.uid, () => { applyPowerDelta(t, 1, { side: 'ai', card: liveCard }); render(); resolve(); }, 'buff');
           });
         }
+        endBuffBatch();
       }
     }
+    if (cardData.playBuffRepeat) {
+      await delay(400);
+      await startSequentialBuffPicks('ai', cardData, cardData.playBuffRepeat, null);
+    }
+    if (cardData.playMoveOnePower) {
+      await startMercenaryMove('ai', cardData, null);
+    }
+    await buffReactionsIdle();
     // Now that the played card's ENTIRE play-effect chain (discard/deck
     // choice, targeted damage/debuff -- whatever it had) has fully resolved,
     // it's safe to let allies (e.g. Tridam Infantry) react to it.
@@ -4546,6 +4878,7 @@ async function aiTakeTurn() {
       await aiUseAvailableOrders();
       render();
     }
+    await buffReactionsIdle();
     state.aiComboPlan = null;
     // draw only happens once the turn is actually ending
     setTimeout(() => {
@@ -4937,7 +5270,7 @@ function startDeckTopDamage(side, card, notifyInfo, onDone) {
 // effect isn't missed when it's played via another card's ability (Field
 // Medic, Yennefer, Caretaker).
 function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
-  const finish = () => {
+  let finish = () => {
     if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
     render();
     if (onDone) onDone();
@@ -4976,22 +5309,29 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
         .filter(c => c.uid !== card.uid).length;
       if (validCount === 0) { finish(); return; }
       startTargeting({ side: 'player', card, kind: 'playBuffMulti', max: card.playBuffMulti,
-                        selected: [], excludeSelf: true, effect: t => applyPowerDelta(t, 1),
+                        selected: [], excludeSelf: true, effect: t => applyPowerDelta(t, 1, { side: 'player', card }),
                         notifyInfo, onDone });
     } else {
       const liveCard = state.players.ai.board.find(c => c.uid === card.uid) || card;
-      const ownTargets = state.players.ai.board.filter(c => c.uid !== liveCard.uid).slice(0, card.playBuffMulti);
+      const ownTargets = aiPickMultiBuffTargets(liveCard, card.playBuffMulti);
       if (ownTargets.length === 0) { finish(); return; }
       let remaining = ownTargets.length;
+      beginBuffBatch();
+      const finishBatch = finish;
+      finish = () => { endBuffBatch(); finishBatch(); };
       ownTargets.forEach(t => {
         shootProjectile(liveCard.uid, t.uid, () => {
-          applyPowerDelta(t, 1);
+          applyPowerDelta(t, 1, { side: 'ai', card: liveCard });
           render();
           remaining--;
           if (remaining === 0) finish();
         }, 'buff');
       });
     }
+  } else if (card.playBuffRepeat) {
+    startSequentialBuffPicks(side, card, card.playBuffRepeat, notifyInfo, onDone);
+  } else if (card.playMoveOnePower) {
+    startMercenaryMove(side, card, notifyInfo, onDone);
   } else {
     finish();
   }
@@ -5748,6 +6088,7 @@ document.getElementById('cancelTargetNo').addEventListener('click', () => resolv
 // needs nothing further -- the turn was never blocked on it.
 function resumeAfterCancelledTargeting(session) {
   if (!session) return;
+  if (session.onCancel) { session.onCancel(); return; } // e.g. Adventurer's sequential picks: ends the rest
   if (session.notifyInfo) {
     notifyAllyPlay(session.side, session.notifyInfo.card, session.notifyInfo.isFirstPlayThisTurn);
     render();
@@ -5929,6 +6270,7 @@ function resolveTargeting(targetCard) {
     return;
   }
   const { side, card, kind, ability, amount, notifyInfo, onDone } = activeTargeting;
+  const activeTargetingSnapshot = activeTargeting;
   cancelTargeting();
   render();
   if (kind === 'order') {
@@ -5949,6 +6291,30 @@ function resolveTargeting(targetCard) {
     });
   } else if (kind === 'playDebuff') {
     applyPlayRemoveBuffs(side, card, targetCard, () => {
+      if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      render();
+      if (onDone) onDone();
+      if (side === 'player') maybeAutoEndTurn('player');
+    });
+  } else if (kind === 'playBuffSeq') {
+    // one pick of a sequential buff (Mahakam Adventurer / Guard)
+    const { onPicked } = activeTargetingSnapshot;
+    shootProjectile(card.uid, targetCard.uid, () => {
+      applyPowerDelta(targetCard, 1, { side, card });
+      logMsg(`Your ${card.name} gives ${targetCard.name} +1.`);
+      render();
+      if (onPicked) onPicked();
+    }, 'buff');
+  } else if (kind === 'reactionBuff') {
+    // Dwarven Chariot's reaction
+    shootProjectile(card.uid, targetCard.uid, () => {
+      applyPowerDelta(targetCard, amount || 1, { side, card });
+      logMsg(`Your ${card.name} gives ${targetCard.name} +${amount || 1}.`);
+      render();
+      if (onDone) onDone();
+    }, 'buff');
+  } else if (kind === 'playMove') {
+    moveCardToOtherSide(targetCard, () => {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
@@ -6018,7 +6384,9 @@ function applyMultiTargetEffect(session, targetUids) {
     applyMultiRefresh(side, card, targetUids.map(findCardByUid).filter(Boolean), orderDone);
     return;
   }
+  beginBuffBatch(); // buff reactions wait until every pick has landed
   const finishAll = () => {
+    endBuffBatch();
     if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
     render();
     if (onDone) onDone();
@@ -6046,6 +6414,7 @@ function applyMultiTargetEffect(session, targetUids) {
 // immediately against the source card itself.
 function activateOrderAbility(side, card) {
   if (activeTargeting) return;
+  if (buffReactionsBusy()) return; // a buff reaction (e.g. Chariot) is still resolving
   if (!isOrderReady(side, card)) return;
   const ability = findOrderAbility(card);
   if (!ability) return;
@@ -6197,7 +6566,7 @@ function renderPlayerHand() {
   const handDiv = document.getElementById('playerHand');
   handDiv.innerHTML = '';
   const canAct = state.phase === 'playing' && state.activeTurn === 'player' &&
-    !state.players.player.passed && !state.players.player.actedThisTurn && !activeTargeting;
+    !state.players.player.passed && !state.players.player.actedThisTurn && !activeTargeting && !buffReactionsBusy();
   const n = state.players.player.hand.length;
   const center = (n - 1) / 2;
   state.players.player.hand.forEach((c, i) => {
@@ -6371,7 +6740,7 @@ function onDragEnd(e) {
   drag = null;
 
   if (overBoard && state.phase === 'playing' && state.activeTurn === 'player' &&
-      !state.players.player.passed && !state.players.player.actedThisTurn) {
+      !state.players.player.passed && !state.players.player.actedThisTurn && !buffReactionsBusy()) {
     SFX.place();
     const playedCard = p_findCard(uid);
     if (playedCard && playedCard.special) {
@@ -6431,8 +6800,12 @@ function continueAfterPlayerPlay(playedCard, played) {
         maybeAutoEndTurn('player');
       } else {
         startTargeting({ side: 'player', card: playedCard, kind: 'playBuffMulti', max: playedCard.playBuffMulti,
-                          selected: [], excludeSelf: true, effect: t => applyPowerDelta(t, 1), notifyInfo });
+                          selected: [], excludeSelf: true, effect: t => applyPowerDelta(t, 1, { side: 'player', card: playedCard }), notifyInfo });
       }
+    } else if (playedCard && playedCard.playBuffRepeat) {
+      startSequentialBuffPicks('player', playedCard, playedCard.playBuffRepeat, notifyInfo);
+    } else if (playedCard && playedCard.playMoveOnePower) {
+      startMercenaryMove('player', playedCard, notifyInfo);
     } else {
       if (notifyInfo) notifyAllyPlay('player', notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();

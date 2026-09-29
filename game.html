@@ -2064,6 +2064,39 @@ const CARD_DB = {
   vysogota:          { id: 'vysogota', name: 'Vysogota of Corvo', power: 2, tier: 'silver', faction: 'northern_realms', img: 'cards/vysogota.jpg', abilities: [],
                        discardChoice: 'bronze', discardFilter: c => isReviveEligibleBronze(c), reviveOrderUsableNow: true },
 
+  /* ---- Northern Realms golds ---- */
+  // Play: 3 damage (cancelable like other Play damage). Order: a Soldier token to his right.
+  vernon_roche:      { id: 'vernon_roche', name: 'Vernon Roche', power: 4, tier: 'gold', faction: 'northern_realms', img: 'cards/vernon_roche.jpg', playTargetDamage: 3,
+                       abilities: [ { trigger: 'order', needsTarget: false, effect: (ctx) => createTokensRightOf(ctx.side, ctx.card, 'soldier_token', 1) } ] },
+  // Order: 2 damage. Passive: +2 on its owner's exactly-2nd Order of a turn.
+  john_natalis:      { id: 'john_natalis', name: 'John Natalis', power: 4, tier: 'gold', faction: 'northern_realms', img: 'cards/john_natalis.jpg',
+                       buffOnSecondOrder: 2,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
+  // Play AND Order: refresh up to 2 used Orders on own Bronze/Token cards
+  // (Scouts allowed). Multi-target pick like Inspiring Troubadour: finishes
+  // on the 2nd pick, or early (with 1) by clicking away and confirming.
+  king_demavend:     { id: 'king_demavend', name: 'King Demavend III', power: 4, tier: 'gold', faction: 'northern_realms', img: 'cards/king_demavend.jpg',
+                       refreshAllowsScouts: true, playRefreshMulti: 2,
+                       abilities: [ { trigger: 'order', needsTarget: true, isRefresh: true, multiRefresh: 2,
+                                      validTargets: (side, card) => scoutRefreshTargets(side, card),
+                                      effect: (ctx, target) => refreshOrder(target) } ] },
+  // Play AND Order: refresh one used Order (Odrin rules). Passive: +2 on the 2nd Order.
+  king_foltest:      { id: 'king_foltest', name: 'King Foltest', power: 2, tier: 'gold', faction: 'northern_realms', img: 'cards/king_foltest.jpg',
+                       refreshAllowsScouts: true, buffOnSecondOrder: 2, playRefreshOrder: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isRefresh: true,
+                                      validTargets: (side, card) => scoutRefreshTargets(side, card),
+                                      effect: (ctx, target) => { refreshOrder(target); logMsg(`${target.name}'s Order is refreshed.`); } } ] },
+  // Play: a Soldier token to his right. Order: discard the highest card(s)
+  // in play, both boards, ties all (himself included if tied).
+  king_henselt:      { id: 'king_henselt', name: 'King Henselt', power: 3, tier: 'gold', faction: 'northern_realms', img: 'cards/king_henselt.jpg',
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'soldier_token', 1) },
+                                    { trigger: 'order', needsTarget: false, isScorch: true, effect: (ctx) => resolveHighestDiscardOrder(ctx.side, ctx.card) } ] },
+  // Order: same as Nenneke.
+  shani:             { id: 'shani', name: 'Shani', power: 5, tier: 'gold', faction: 'northern_realms', img: 'cards/shani.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze',
+                                      filter: c => isReviveEligibleBronze(c), reviveOrderUsableNow: true,
+                                      validTargets: (side) => state.players[side].graveyard.filter(c => c.tier === 'bronze' && isReviveEligibleBronze(c)) } ] },
+
   // Token: never in random decks or the Card Library, and it vanishes when
   // it leaves the board (never reaches a discard pile) -- see sendToGraveyard.
   soldier_token:     { id: 'soldier_token', name: 'Soldier', power: 1, tier: 'token', faction: 'northern_realms', img: 'cards/soldier_token.jpg',
@@ -2798,6 +2831,15 @@ function aiDethmoldDiscardFavorable(hypothetical) {
   const o = aiScorchOutcome(hypothetical, true);
   return !!o && o.enemy > 0 && o.enemy > o.own;
 }
+// King Henselt's Order: discard the highest card(s) in play right away
+// (both boards, ties all, Henselt himself if tied), burning like Scorch.
+function resolveHighestDiscardOrder(side, card) {
+  const targets = highestCardsInPlay();
+  if (targets.length === 0) { logMsg(`${card.name}'s Order finds nothing to discard.`); return; }
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} discards ${targets.map(t => t.name).join(', ')} (${targets[0].power} power).`);
+  SFX.burn();
+  targets.forEach(t => killCardFromBoard(t, { flame: true }, () => render()));
+}
 function resolveDethmoldDiscard(side, card, onDone) {
   pendingPlayTokenSpawns++; // hold the turn open until the discards finish
   const done = () => { pendingPlayTokenSpawns--; if (onDone) onDone(); };
@@ -2950,16 +2992,54 @@ function scoutRefreshTargets(side, scout) {
 }
 // The AI's pick for a Scout refresh: prefer a damage Order that has a kill
 // available right now, then the biggest damage Order, then anything.
-function aiPickScoutTarget(scout) {
-  const targets = scoutRefreshTargets('ai', scout);
-  if (targets.length === 0) return null;
+function aiRefreshTargetScore(c) {
   const enemy = state.players.player.board;
-  const score = c => {
-    const a = findOrderAbility(c);
-    if (a.isDamage) { const amt = orderDamageAmount('ai', c, a); return (enemy.some(e => e.power > 0 && e.power <= amt) ? 100 : 10) + amt; }
-    return 5;
+  const a = findOrderAbility(c);
+  if (a.isDamage) { const amt = orderDamageAmount('ai', c, a); return (enemy.some(e => e.power > 0 && e.power <= amt) ? 100 : 10) + amt; }
+  return 5;
+}
+function aiPickScoutTarget(scout) {
+  return aiPickRefreshTargets(scout, 1)[0] || null;
+}
+// King Demavend: the AI's best `n` distinct refresh targets.
+function aiPickRefreshTargets(source, n) {
+  return scoutRefreshTargets('ai', source).sort((a, b) => aiRefreshTargetScore(b) - aiRefreshTargetScore(a)).slice(0, n);
+}
+// Refreshes each target in turn with a green projectile from `source`.
+function applyMultiRefresh(side, source, targets, onDone) {
+  const queue = targets.slice();
+  const next = () => {
+    const t = queue.shift();
+    if (!t) { render(); if (onDone) onDone(); return; }
+    applyScoutRefresh(side, source, t, next);
   };
-  return targets.slice().sort((a, b) => score(b) - score(a))[0];
+  next();
+}
+// King Demavend's Play: player picks 1-2 targets (multi-target session;
+// auto-finishes at the cap, or early by clicking away + confirming); the AI
+// refreshes its best ones. Fizzles when nothing qualifies.
+function startMultiRefresh(side, card, notifyInfo, onDone) {
+  return new Promise(resolve => {
+    const liveCard = state.players[side].board.find(c => c.uid === card.uid) || card;
+    const finish = () => {
+      if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      render();
+      if (onDone) onDone();
+      if (side === 'player') maybeAutoEndTurn('player');
+      resolve();
+    };
+    const targets = scoutRefreshTargets(side, liveCard);
+    if (targets.length === 0) { logMsg(`${liveCard.name} has no used Order to refresh.`); finish(); return; }
+    if (side === 'player') {
+      const valid = new Set(targets.map(c => c.uid));
+      startTargeting({ side: 'player', card: liveCard, kind: 'playBuffMulti', max: liveCard.playRefreshMulti, selected: [],
+                       excludeSelf: true, filter: c => valid.has(c.uid), refreshProjectile: true,
+                       effect: t => { refreshOrder(t); logMsg(`Your ${liveCard.name} refreshes ${t.name}'s Order.`); },
+                       notifyInfo, onDone: () => { if (onDone) onDone(); resolve(); } });
+    } else {
+      applyMultiRefresh('ai', liveCard, aiPickRefreshTargets(liveCard, liveCard.playRefreshMulti), finish);
+    }
+  });
 }
 function applyScoutRefresh(side, scout, target, onDone) {
   shootProjectile(scout.uid, target.uid, () => {
@@ -4239,6 +4319,27 @@ async function aiUseAvailableOrders(opts) {
       continue;
     }
 
+    if (ability.multiRefresh) {
+      // King Demavend: refresh the best 2 -- worth it if one of them would
+      // actually get used, or to reach a valuable 2nd Order.
+      const picks = aiPickRefreshTargets(readyCard, ability.multiRefresh);
+      const useful = picks.some(t => { const ta = findOrderAbility(t); return !ta.isDamage || state.players.player.board.some(e => e.power > 0 && e.power <= orderDamageAmount('ai', t, ta)); });
+      if (picks.length === 0 || (!useful && !aiWantsSecondOrder(readyAll.length))) { heldBack.add(readyCard.uid); continue; }
+      await new Promise(resolve => applyMultiTargetEffect({ side: 'ai', card: readyCard, kind: 'orderMulti', onDone: resolve }, picks.map(c => c.uid)));
+      await delay(500);
+      continue;
+    }
+    if (ability.isScorch) {
+      // King Henselt: only when the discard is net favorable (never when it
+      // would hit only the AI's own cards) -- same evaluation as Scorch.
+      const o = aiScorchOutcome(readyCard, true);
+      if (!o || o.enemy <= 0 || o.enemy <= o.own) { heldBack.add(readyCard.uid); continue; }
+      await new Promise(resolve => applyOrderAbility('ai', readyCard, ability, readyCard, resolve));
+      render();
+      await delay(900); // let the burn animations play out
+      continue;
+    }
+
     let target;
     if (ability.isDamage) {
       // Normally only spend a damage Order on a target it can finish off
@@ -4381,6 +4482,10 @@ async function aiTakeTurn() {
     if (cardData.playRefreshOrder) {
       await delay(400);
       await startScoutRefresh('ai', cardData, null);
+    }
+    if (cardData.playRefreshMulti) {
+      await delay(400);
+      await startMultiRefresh('ai', cardData, null);
     }
     if (dethmoldDiscardActive('ai', cardData)) {
       await new Promise(resolve => resolveDethmoldDiscard('ai', cardData, resolve));
@@ -4841,6 +4946,8 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
     startDeckTopDamage(side, card, notifyInfo, onDone);
   } else if (card.playRefreshOrder) {
     startScoutRefresh(side, card, notifyInfo, onDone);
+  } else if (card.playRefreshMulti) {
+    startMultiRefresh(side, card, notifyInfo, onDone);
   } else if (dethmoldDiscardActive(side, card)) {
     resolveDethmoldDiscard(side, card, finish);
   } else if (card.playTargetDamage) {
@@ -5570,7 +5677,8 @@ function requestCancelTargeting() {
   // clicking a valid target -- clicking away (or pressing Escape) should
   // not let the player back out of a scripted targeted-ability beat.
   if (state && state.tutorial) return;
-  if (session.kind === 'order') {
+  if (session.kind === 'order' || (session.kind === 'orderMulti' && session.selected.length === 0)) {
+    // (a multi-target Order with nothing picked yet is simply backed out of)
     cancelTargeting();
     render();
     resumeAfterCancelledTargeting(session);
@@ -5585,7 +5693,7 @@ function resolveCancelTargetDialog(confirmed) {
   targetingCancelConfirmOpen = false;
   cancelTargetDialog.classList.remove('show');
   if (!confirmed || !session) return;
-  if (session.kind === 'playBuffMulti') {
+  if (session.kind === 'playBuffMulti' || session.kind === 'orderMulti') {
     // finishing early still applies the effect to whatever's already
     // selected (possibly nothing) -- it isn't a full cancel
     const targets = session.selected.slice();
@@ -5614,7 +5722,7 @@ function resumeAfterCancelledTargeting(session) {
   // A cancelled special-card effect (e.g. Alzur's Thunder) still needs to
   // finish its own fly-to-discard-pile sequence -- its outer caller handles
   // ending the turn once that's done, so skip the generic auto-end here.
-  if (session.side === 'player' && session.kind !== 'order' && session.kind !== 'specialDamage') {
+  if (session.side === 'player' && session.kind !== 'order' && session.kind !== 'orderMulti' && session.kind !== 'specialDamage') {
     maybeAutoEndTurn('player');
   }
 }
@@ -5709,7 +5817,8 @@ function applyOrderAbility(side, card, ability, target, onDone) {
     state.players[side].orderUsedThisTurn = true;
     noteOrderUsed(side);
     const itself = target.uid === card.uid ? ' (itself)' : '';
-    logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order on ${target.name}${itself}.`);
+    if (ability.isScorch) logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order.`);
+    else logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order on ${target.name}${itself}.`);
     if (onDone) onDone();
   };
   if (ability.isDamage && target.uid !== card.uid) {
@@ -5726,8 +5835,9 @@ function applyOrderAbility(side, card, ability, target, onDone) {
     }, 'buff');
   } else if (!ability.isDamage) {
     // a self-buff (e.g. Angoulême) -- no projectile needed, just the sound
+    // (Henselt's discard Order has its own burn sound instead)
     ability.effect(ctxAtActivation, target);
-    SFX.buff();
+    if (!ability.isScorch) SFX.buff();
     finish();
   } else {
     ability.effect(ctxAtActivation, target);
@@ -5780,7 +5890,7 @@ function applyPlayRemoveBuffs(side, card, target, onDone) {
 
 function resolveTargeting(targetCard) {
   if (!activeTargeting) return;
-  if (activeTargeting.kind === 'playBuffMulti') {
+  if (activeTargeting.kind === 'playBuffMulti' || activeTargeting.kind === 'orderMulti') {
     handleMultiTargetClick(targetCard);
     return;
   }
@@ -5826,7 +5936,7 @@ function resolveTargeting(targetCard) {
 // when the ability excludes self-targeting).
 function countValidMultiTargets(session) {
   const all = [...state.players.player.board, ...state.players.ai.board];
-  return all.filter(c => !(session.excludeSelf && c.uid === session.card.uid)).length;
+  return all.filter(c => !(session.excludeSelf && c.uid === session.card.uid) && (!session.filter || session.filter(c))).length;
 }
 
 // A click on a valid target during multi-target selection toggles it
@@ -5861,6 +5971,19 @@ function handleMultiTargetClick(targetCard) {
 // no effect, but the card itself already stayed on the board as normal.
 function applyMultiTargetEffect(session, targetUids) {
   const { side, card, notifyInfo, onDone } = session;
+  if (session.kind === 'orderMulti') {
+    // King Demavend's Order: consumed once its picks have all resolved
+    const orderDone = () => {
+      card.orderUsed = true;
+      state.players[side].orderUsedThisTurn = true;
+      noteOrderUsed(side);
+      logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order.`);
+      render();
+      if (onDone) onDone();
+    };
+    applyMultiRefresh(side, card, targetUids.map(findCardByUid).filter(Boolean), orderDone);
+    return;
+  }
   const finishAll = () => {
     if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
     render();
@@ -5894,6 +6017,10 @@ function activateOrderAbility(side, card) {
   if (!ability) return;
   if (ability.isDiscardPlay) {
     activateDiscardPlayOrder(side, card, ability);
+  } else if (ability.multiRefresh) {
+    const valid = new Set(ability.validTargets(side, card).map(c => c.uid));
+    startTargeting({ side, card, kind: 'orderMulti', ability, max: ability.multiRefresh, selected: [],
+                     excludeSelf: true, filter: c => valid.has(c.uid) });
   } else if (ability.needsTarget) {
     const session = { side, card, kind: 'order', ability, excludeSelf: !!ability.excludeSelf };
     if (ability.validTargets) {
@@ -6249,6 +6376,8 @@ function continueAfterPlayerPlay(playedCard, played) {
       startDeckTopDamage('player', playedCard, notifyInfo);
     } else if (playedCard && playedCard.playRefreshOrder) {
       startScoutRefresh('player', playedCard, notifyInfo);
+    } else if (playedCard && playedCard.playRefreshMulti) {
+      startMultiRefresh('player', playedCard, notifyInfo);
     } else if (playedCard && dethmoldDiscardActive('player', playedCard)) {
       resolveDethmoldDiscard('player', playedCard, () => {
         if (notifyInfo) notifyAllyPlay('player', notifyInfo.card, notifyInfo.isFirstPlayThisTurn);

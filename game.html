@@ -2055,6 +2055,48 @@ const CARD_DB = {
   dwarven_mercenary: { id: 'dwarven_mercenary', name: 'Dwarven Mercenary', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarven_mercenary.jpg', playMoveOnePower: true,
                        abilities: [ { trigger: 'order', needsTarget: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
 
+
+  /* ---- Mahakam silvers ---- */
+  // Order: discard the highest card(s) in play (Scorch across both boards).
+  yarpen_zigrin:     { id: 'yarpen_zigrin', name: 'Yarpen Zigrin', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/yarpen_zigrin.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: false, isScorch: true, effect: (ctx) => resolveHighestDiscardOrder(ctx.side, ctx.card) } ] },
+  // Play: +1 to a card in play, three sequential picks (itself allowed, repeats allowed).
+  barclay_els:       { id: 'barclay_els', name: 'Barclay Els', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/barclay_els.jpg',
+                       playBuffRepeat: 3, playBuffIncludeSelf: true, abilities: [] },
+  // Play AND Order: +2 to a card in play (itself allowed).
+  barnabas_beckenbauer: { id: 'barnabas_beckenbauer', name: 'Barnabas Beckenbauer', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/barnabas_beckenbauer.jpg',
+                       playBuffRepeat: 1, playBuffAmount: 2, playBuffIncludeSelf: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isBuff: true, amount: 2, effect: (ctx, target) => applyPowerDelta(target, 2, ctx) } ] },
+  // Order: three sequential +1 picks (see runSeqBuffOrder).
+  dennis_cranmer:    { id: 'dennis_cranmer', name: 'Dennis Cranmer', power: 4, tier: 'silver', faction: 'mahakam', img: 'cards/dennis_cranmer.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: false, isBuff: true, seqBuff: 3, amount: 1, effect: () => {} } ] },
+  // Order: deal 1. Refreshes the first time its owner buffs it each turn.
+  figgis_merluzzo:   { id: 'figgis_merluzzo', name: 'Figgis Merluzzo', power: 5, tier: 'silver', faction: 'mahakam', img: 'cards/figgis_merluzzo.jpg', refreshOnBuffed: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Order: deal 2. Passive: +2 the first time each turn its owner buffs another card.
+  gabor_zigrin:      { id: 'gabor_zigrin', name: 'Gabor Zigrin', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/gabor_zigrin.jpg', buffOnOwnerBuffOther: 2,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
+  // Play (may): deal 2. Order: +3 to itself -- only once its owner has buffed a card this turn.
+  munro_bruys:       { id: 'munro_bruys', name: 'Munro Bruys', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/munro_bruys.jpg', playTargetDamage: 2,
+                       abilities: [ { trigger: 'order', needsTarget: false, isBuff: true, amount: 3,
+                                      validTargets: (side, card) => (state.players[side]._buffedAnyTurn === state.turnCounter ? [card] : []),
+                                      effect: (ctx) => applyPowerDelta(ctx.card, 3, ctx) } ] },
+  // Play (may): +1 to another card in play. Passive: while in its owner's
+  // discard pile, once its owner has buffed 2+ DIFFERENT cards in play in
+  // one turn, it plays itself from there (see notePaulieBuff).
+  paulie_dahlberg:   { id: 'paulie_dahlberg', name: 'Paulie Dahlberg', power: 2, tier: 'silver', faction: 'mahakam', img: 'cards/paulie_dahlberg.jpg',
+                       playBuffRepeat: 1, returnOnTwoDistinctBuffs: true, abilities: [] },
+  // Order: damage equal to its current power (max 6), fixed at activation.
+  sheldon_skaggs:    { id: 'sheldon_skaggs', name: 'Sheldon Skaggs', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/sheldon_skaggs.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 3,
+                                      amountFn: (side, card) => Math.max(0, Math.min(6, card ? card.power : 3)),
+                                      effect: (ctx, target) => applyDamage(target, ctx.amount) } ] },
+  // Order: up to two OTHER cards +1 each. Refreshes the first time its owner buffs it each turn.
+  xavier_moran:      { id: 'xavier_moran', name: 'Xavier Moran', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/xavier_moran.jpg', refreshOnBuffed: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, multiBuff: 2,
+                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial),
+                                      effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
+
   /* ---- Northern Realms silvers ---- */
   // Order: play a Bronze unit (non-token, non-special, printed power >= 1)
   // from its owner's discard pile, same picker/AI pick as Vysogota; the
@@ -3189,7 +3231,12 @@ const buffReactionQueue = [];
 let buffBatchDepth = 0;
 let buffReactionProcessing = false;
 let buffReactionTally = { turn: -1, n: 0 };
-function buffReactionsBusy() { return buffReactionProcessing || buffReactionQueue.length > 0; }
+// seqBuffActive: sequential +N pick sessions in progress (Adventurer,
+// Barclay, Dennis...). Between picks no targeting session is open (a buff
+// projectile is in flight), so this keeps other Orders/actions from
+// starting a second, overlapping session.
+let seqBuffActive = 0;
+function buffReactionsBusy() { return buffReactionProcessing || buffReactionQueue.length > 0 || seqBuffActive > 0 || paulieReturnPending > 0; }
 function beginBuffBatch() { buffBatchDepth++; }
 function endBuffBatch() { buffBatchDepth = Math.max(0, buffBatchDepth - 1); scheduleBuffReactions(); }
 function buffReactionsIdle() {
@@ -3215,7 +3262,9 @@ function onCardBuffed(card, amount, sourceSide, sourceCard) {
   const firstOwnerBuff = byOwner && card._ownerBuffedTurn !== t;
   if (byOwner) card._ownerBuffedTurn = t;
   const sp = sourceSide && state.players[sourceSide];
+  if (sp) sp._buffedAnyTurn = t; // Munro Bruys' Order readiness
   if (sp && (!sourceCard || sourceCard.uid !== card.uid)) sp._buffedAnotherTurn = t;
+  if (sp) notePaulieBuff(sourceSide, card);
 
   if (card.refreshOnBuffed && firstOwnerBuff) {
     if (card.orderUsed) {
@@ -3235,6 +3284,69 @@ function onCardBuffed(card, amount, sourceSide, sourceCard) {
     });
   }
   scheduleBuffReactions();
+}
+/* ---- Paulie Dahlberg: each side keeps a per-turn set of the distinct
+   cards (by uid) its own effects have buffed. Once that set reaches 2 while
+   a Paulie sits in that side's discard pile, he's brought back (once per
+   turn) -- but only after EVERYTHING pending has resolved: no targeting
+   session, no sequential/multi buff in progress, no queued buff reactions,
+   no pending token spawns, no projectile/card flight on screen. His Play
+   (+1 to another card) then runs as usual: targeting for the player, an
+   auto-pick for the AI. While pending he counts as "busy" (buffReactionsBusy)
+   so the AI waits and the player can't start new actions. */
+let paulieReturnPending = 0;
+function distinctBuffSet(side) {
+  const p = state.players[side];
+  if (!p._distinctBuffs || p._distinctBuffs.turn !== state.turnCounter) p._distinctBuffs = { turn: state.turnCounter, uids: new Set(), fired: false };
+  return p._distinctBuffs;
+}
+function notePaulieBuff(side, card) {
+  const d = distinctBuffSet(side);
+  d.uids.add(card.uid);
+  if (d.uids.size >= 2 && !d.fired && state.players[side].graveyard.some(c => c.returnOnTwoDistinctBuffs)) {
+    d.fired = true;
+    schedulePaulieReturn(side);
+  }
+}
+function effectsSettled() {
+  return !activeTargeting && buffReactionQueue.length === 0 && !buffReactionProcessing && seqBuffActive === 0 &&
+         buffBatchDepth === 0 && pendingPlayTokenSpawns <= paulieReturnPending &&
+         !document.querySelector('.projectile, .flyingCard');
+}
+function schedulePaulieReturn(side) {
+  paulieReturnPending++;
+  pendingPlayTokenSpawns++; // hold the turn open
+  const turn = state.turnCounter;
+  let settledTicks = 0, waitedMs = 0;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    paulieReturnPending = Math.max(0, paulieReturnPending - 1);
+    pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
+    if (state) {
+      render();
+      if (state.phase === 'playing' && state.activeTurn === 'player') maybeAutoEndTurn('player');
+    }
+  };
+  const wait = async () => {
+    if (!state || state.phase !== 'playing' || state.turnCounter !== turn) { release(); return; }
+    // (safety valve: never wait forever on a stray hold -- an open targeting
+    // session, i.e. the player deciding, doesn't count towards it)
+    if (!activeTargeting) waitedMs += 80;
+    if (effectsSettled() || waitedMs > 8000) settledTicks++; else settledTicks = 0;
+    if (settledTicks < 3) { setTimeout(wait, 80); return; }
+    try {
+      const p = state.players[side];
+      for (const c of p.graveyard.filter(g => g.returnOnTwoDistinctBuffs)) {
+        if (!state || state.phase !== 'playing' || !p.graveyard.some(g => g.uid === c.uid)) continue;
+        logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name} returns from the discard pile!`);
+        await playFreeCardWithAnimation(side, c.uid);
+      }
+    } catch (e) { console.error(e); }
+    release();
+  };
+  setTimeout(wait, 80);
 }
 function scheduleBuffReactions() {
   if (buffReactionProcessing || buffReactionQueue.length === 0) return;
@@ -3306,6 +3418,15 @@ function aiBuffTargetScore(c, source) {
   if (c.refreshOnBuffed && c.orderUsed && c._ownerBuffedTurn !== t) s += 6;
   if (c.chariotOnOwnerBuff && c._ownerBuffedTurn !== t) s += 4;
   if (c.tier === 'token') s -= 0.5;
+  // Sheldon Skaggs' ready Order hits for his power (max 6)
+  if (c.id === 'sheldon_skaggs' && !c.orderUsed && c.power < 6) s += 1;
+  // Paulie Dahlberg in the AI's discard pile: a buff on a card not yet
+  // buffed this turn moves it towards the 2-distinct-cards return.
+  const side = findCardOwnerSide(c.uid) || 'ai';
+  if (state.players.ai.graveyard.some(g => g.returnOnTwoDistinctBuffs) && side === 'ai') {
+    const d = distinctBuffSet('ai');
+    if (!d.fired && !d.uids.has(c.uid)) s += 3;
+  }
   return s;
 }
 // Distinct targets for a multi-pick buff (Troubadour / Rowdy Dwarf).
@@ -3325,12 +3446,24 @@ function aiPickBuffTarget(source, excludeSelf, side) {
    again). Player: targeting noodle per pick; backing out (confirm) ends
    the rest. AI: own cards only. The whole sequence is one buff batch, so
    reactions (Chariot, Defender) wait until it's done. */
-function startSequentialBuffPicks(side, card, n, notifyInfo, onDone) {
+function startSequentialBuffPicks(side, card, n, notifyInfo, onDone, opts) {
+  opts = opts || {};
+  const amt = opts.amount || card.playBuffAmount || 1;
+  const includeSelf = opts.includeSelf !== undefined ? opts.includeSelf : !!card.playBuffIncludeSelf;
+  let picked = 0;
   return new Promise(resolve => {
     const liveCard = state.players[side].board.find(c => c.uid === card.uid) || card;
     beginBuffBatch();
+    seqBuffActive++;
+    pendingPlayTokenSpawns++;
+    let finished = false;
     const finish = () => {
+      if (finished) return;
+      finished = true;
+      seqBuffActive = Math.max(0, seqBuffActive - 1);
+      pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
       endBuffBatch();
+      if (opts.onFinished) opts.onFinished(picked);
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
@@ -3340,24 +3473,52 @@ function startSequentialBuffPicks(side, card, n, notifyInfo, onDone) {
     let left = n;
     const next = () => {
       if (left <= 0 || !state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
-      const others = [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== liveCard.uid && !c.floatingSpecial);
+      const others = [...state.players.player.board, ...state.players.ai.board].filter(c => (includeSelf || c.uid !== liveCard.uid) && !c.floatingSpecial);
       if (others.length === 0) { finish(); return; }
       left--;
       if (side === 'player') {
-        startTargeting({ side: 'player', card: liveCard, kind: 'playBuffSeq', excludeSelf: true,
-                         onPicked: next, onCancel: finish });
+        // startTargeting ignores a request while another session is open --
+        // wait for it rather than silently dropping this pick (which would
+        // leave the sequence, and the turn hold, open forever)
+        const startPick = () => {
+          if (!state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
+          if (activeTargeting) { setTimeout(startPick, 100); return; }
+          startTargeting({ side: 'player', card: liveCard, kind: 'playBuffSeq', excludeSelf: !includeSelf, amount: amt,
+                           onPicked: () => { picked++; next(); }, onCancel: finish });
+        };
+        startPick();
       } else {
-        const target = aiPickBuffTarget(liveCard, true);
+        const target = aiPickBuffTarget(liveCard, !includeSelf);
         if (!target) { finish(); return; }
-        setTimeout(() => shootProjectile(liveCard.uid, target.uid, () => {
-          applyPowerDelta(target, 1, { side, card: liveCard });
-          logMsg(`Opponent's ${liveCard.name} gives ${target.name} +1.`);
+        const apply = () => {
+          applyPowerDelta(target, amt, { side, card: liveCard });
+          logMsg(`Opponent's ${liveCard.name} gives ${target.name} +${amt}.`);
+          picked++;
           render();
           next();
-        }, 'buff'), 300);
+        };
+        if (target.uid === liveCard.uid) setTimeout(() => { SFX.buff(); apply(); }, 300);
+        else setTimeout(() => shootProjectile(liveCard.uid, target.uid, apply, 'buff'), 300);
       }
     };
     next();
+  });
+}
+
+/* ---- Dennis Cranmer's Order: `ability.seqBuff` sequential +1 picks (any
+   card in play, itself included; the same card may repeat). Consumed only
+   if at least one pick landed -- backing out before the first pick leaves
+   the Order unused. */
+function runSeqBuffOrder(side, card, ability) {
+  return startSequentialBuffPicks(side, card, ability.seqBuff, null, null, {
+    amount: ability.amount || 1, includeSelf: !ability.excludeSelf,
+    onFinished: (picked) => {
+      if (picked === 0) return;
+      card.orderUsed = true;
+      state.players[side].orderUsedThisTurn = true;
+      noteOrderUsed(side);
+      logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order.`);
+    }
   });
 }
 
@@ -4506,15 +4667,37 @@ function aiPlanComboKill() {
   const playOptions = [null, ...ai.hand.filter(c => aiPlayDamageFor(c, 0) > 0 || c.playDamagePlusOrdersUsed || c.playDamageFromDeckTop)];
   if (sources.length === 0 && playOptions.length === 1) return null;
   const trigValue = aiSecondOrderTriggerValue();
+  // Ready single-target buff Orders that could refresh a used
+  // Figgis / Berserker (refreshOnBuffed, first owner-buff this turn).
+  const tNow = state.turnCounter;
+  const buffers = ai.board.filter(c => {
+    if (!isOrderReady('ai', c)) return false;
+    const a = findOrderAbility(c);
+    return a && a.needsTarget && !a.isDamage && !a.isRefresh && !a.multiBuff && !a.multiRefresh && !a.seqBuff && !a.isDiscardPlay;
+  });
 
   // Total damage a given set of Orders (+ optional Play card afterwards) deals.
-  const evalDamage = (subset, play) => {
-    const reachesSecond = prior + subset.length >= 2 && prior < 2;
+  // usePairs: also count a refresh buff (extra use) for each refreshOnBuffed
+  // source in the subset -- only tried when the plain subset falls short, so
+  // a buff Order is never spent on a refresh the kill doesn't need.
+  const evalDamage = (subset, play, usePairs) => {
     let orders = 0, dmg = 0, seltCount = 0;
+    const freeBuffers = buffers.slice();
+    const refreshPairs = [];
+    if (usePairs) subset.forEach(c => {
+      if (!c.refreshOnBuffed || c._ownerBuffedTurn === tNow) return;
+      const bi = freeBuffers.findIndex(b => { const ba = findOrderAbility(b); return b.uid !== c.uid && (!ba.validTargets || ba.validTargets('ai', b).some(x => x.uid === c.uid)); });
+      if (bi === -1) return;
+      refreshPairs.push({ dmgUid: c.uid, buffUid: freeBuffers[bi].uid });
+      freeBuffers.splice(bi, 1);
+    });
+    const reachesSecond = prior + subset.length + refreshPairs.length >= 2 && prior < 2;
+    orders += refreshPairs.length;
     subset.forEach(c => {
       const a = findOrderAbility(c);
       if (c.id === 'seltkirk') { seltCount++; return; } // resolved last, below
-      const uses = (c.refreshOnSecondOrder && reachesSecond) ? 2 : 1;
+      let uses = (c.refreshOnSecondOrder && reachesSecond) ? 2 : 1;
+      if (refreshPairs.some(r => r.dmgUid === c.uid)) uses++;
       orders += uses;
       dmg += uses * (a.amountFn ? a.amountFn('ai', c) : (a.amount || 0));
     });
@@ -4523,7 +4706,7 @@ function aiPlanComboKill() {
       orders++;
     }
     const pd = play ? aiPlayDamageFor(play, prior + orders) : 0;
-    return { total: dmg + pd, pd, reachesSecond };
+    return { total: dmg + pd, pd, reachesSecond, refreshPairs };
   };
 
   let best = null;
@@ -4533,25 +4716,31 @@ function aiPlanComboKill() {
     const k = subset.length;
     for (const play of playOptions) {
       if (!play && k === 0) continue;
-      const { total, pd, reachesSecond } = evalDamage(subset, play);
-      if (play && pd <= 0) continue;
+      const plain = evalDamage(subset, play, false);
+      const paired = buffers.length > 0 ? evalDamage(subset, play, true) : plain;
       for (const t of enemies) {
+        const usePairs = plain.total < t.power;
+        const { total, pd, reachesSecond, refreshPairs } = usePairs ? paired : plain;
+        if (play && pd <= 0) continue;
         if (t.power > total) continue;
+        if (usePairs && refreshPairs.length === 0) continue;
         // Minimal plans only: if any single source can be dropped and the
         // kill still happens, this plan wastes that source -- skip it (the
         // smaller plan is enumerated separately).
         let wasteful = false;
         for (let i = 0; i < k && !wasteful; i++) {
-          if (evalDamage(subset.filter((_, j) => j !== i), play).total >= t.power) wasteful = true;
+          if (evalDamage(subset.filter((_, j) => j !== i), play, usePairs).total >= t.power) wasteful = true;
         }
-        if (!wasteful && play && k > 0 && evalDamage(subset, null).total >= t.power) wasteful = true;
+        if (!wasteful && play && k > 0 && evalDamage(subset, null, usePairs).total >= t.power) wasteful = true;
         if (wasteful) continue;
         const value = t.power + (findOrderAbility(t) && !t.orderUsed ? 3 : 0);
         // Orders are a real cost (they could be saved for another target or
         // turn); the Play card is being played this turn anyway, so it's cheap.
-        const score = value + (reachesSecond ? trigValue : 0) - 1.5 * k - (play ? 0.25 : 0) - 0.05 * (total - t.power);
+        // (a refresh buff that isn't needed for the kill is skipped by the
+        // executor -- it only fires while the target is still alive)
+        const score = value + (reachesSecond ? trigValue : 0) - 1.5 * k - 1.0 * refreshPairs.length - (play ? 0.25 : 0) - 0.05 * (total - t.power);
         if (!best || score > best.score) {
-          best = { score, targetUid: t.uid, orderUids: subset.map(c => c.uid), playUid: play ? play.uid : null, total, targetPower: t.power };
+          best = { score, targetUid: t.uid, orderUids: subset.map(c => c.uid), refreshPairs, playUid: play ? play.uid : null, total, targetPower: t.power };
         }
       }
     }
@@ -4577,7 +4766,9 @@ function aiDoomedTargetUid() {
 // once one precedes him).
 function aiPickNextOrderCard(candidates) {
   if (candidates.length === 0) return null;
-  const rank = c => c.refreshOnSecondOrder ? 0 : (c.id === 'seltkirk' ? 2 : 1);
+  // (Munro Bruys' self +3 goes last among what's ready; Sheldon Skaggs after
+  // buffs, since his damage grows with his power.)
+  const rank = c => c.refreshOnSecondOrder ? 0 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
   return candidates.slice().sort((a, b) => rank(a) - rank(b))[0];
 }
 
@@ -4594,7 +4785,20 @@ async function aiExecuteComboPlan(plan) {
     if (!target) break;
     const ready = ai.board.filter(c => planned.has(c.uid) && isOrderReady('ai', c));
     const card = aiPickNextOrderCard(ready);
-    if (!card) break;
+    if (!card) {
+      // a planned refresh: buff a used Figgis/Berserker so it can go again
+      const pair = (plan.refreshPairs || []).find(r => {
+        const d = ai.board.find(c => c.uid === r.dmgUid), b = ai.board.find(c => c.uid === r.buffUid);
+        return d && b && d.orderUsed && d._ownerBuffedTurn !== state.turnCounter && isOrderReady('ai', b);
+      });
+      if (!pair) break;
+      const d = ai.board.find(c => c.uid === pair.dmgUid), b = ai.board.find(c => c.uid === pair.buffUid);
+      await new Promise(resolve => applyOrderAbility('ai', b, findOrderAbility(b), d, resolve));
+      render();
+      await buffReactionsIdle();
+      await delay(500);
+      continue;
+    }
     const ability = findOrderAbility(card);
     await new Promise(resolve => applyOrderAbility('ai', card, ability, target, resolve));
     render();
@@ -4644,6 +4848,8 @@ async function aiUseAvailableOrders(opts) {
   // retried forever, without being marked as used.
   const heldBack = new Set();
   while (guard++ < 20) {
+    await buffReactionsIdle(); // reactions / Paulie's return settle first
+    if (!state || state.phase !== 'playing') return;
     const readyAll = ai.board.filter(c => isOrderReady('ai', c) && !heldBack.has(c.uid));
     const readyCard = aiPickNextOrderCard(readyAll);
     if (!readyCard) break;
@@ -4680,6 +4886,15 @@ async function aiUseAvailableOrders(opts) {
       const useful = picks.some(t => { const ta = findOrderAbility(t); return !ta.isDamage || state.players.player.board.some(e => e.power > 0 && e.power <= orderDamageAmount('ai', t, ta)); });
       if (picks.length === 0 || (!useful && !aiWantsSecondOrder(readyAll.length))) { heldBack.add(readyCard.uid); continue; }
       await new Promise(resolve => applyMultiTargetEffect({ side: 'ai', card: readyCard, kind: 'orderMulti', onDone: resolve }, picks.map(c => c.uid)));
+      await delay(500);
+      continue;
+    }
+    if (ability.seqBuff) {
+      // Dennis Cranmer: 3 sequential +1s on its own cards
+      await runSeqBuffOrder('ai', readyCard, ability);
+      if (!readyCard.orderUsed) heldBack.add(readyCard.uid);
+      render();
+      await buffReactionsIdle();
       await delay(500);
       continue;
     }
@@ -4786,6 +5001,8 @@ async function aiTakeTurn() {
     return;
   }
 
+  await buffReactionsIdle();
+  if (!state || state.phase !== 'playing') return;
   let decision = decideAiAction();
   if (decision.action === 'pass' && ai.orderUsedThisTurn) {
     // having used an Order, the AI can no longer just pass -- it must still
@@ -5437,6 +5654,22 @@ function aiLeastBadCard(cards) {
   return cards.slice().sort((a, b) => net(b) - net(a) || a.power - b.power)[0];
 }
 
+// Extra board value a hand card's Play buff adds (Adventurer, Guard, Barclay,
+// Barnabas, Paulie), plus Paulie Dahlberg's return when this play would
+// complete 2 distinct buffed cards this turn with him in the AI's discard.
+function aiPlayBuffValue(c) {
+  if (!c.playBuffRepeat) return 0;
+  const ai = state.players.ai;
+  const includeSelf = !!c.playBuffIncludeSelf;
+  if (!includeSelf && ai.board.length === 0) return 0;
+  let v = c.playBuffRepeat * (c.playBuffAmount || 1);
+  if (ai.graveyard.some(g => g.returnOnTwoDistinctBuffs && g.uid !== c.uid)) {
+    const d = distinctBuffSet('ai');
+    const reachable = d.uids.size + Math.min(c.playBuffRepeat, ai.board.length + (includeSelf ? 1 : 0));
+    if (!d.fired && reachable >= 2) v += 3;
+  }
+  return v;
+}
 function decideAiAction() {
   const ai = state.players.ai;
   const opp = state.players.player;
@@ -5484,7 +5717,7 @@ function decideAiAction() {
   }
 
   // Siege Tower is worth 6 once 2+ Orders were used this turn, else 3.
-  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0);
+  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0) + aiPlayBuffValue(c);
   const sorted = [...hand].sort((a, b) => pv(a) - pv(b));
   const weakest = sorted[0];
   const strongest = sorted[sorted.length - 1];
@@ -6352,12 +6585,15 @@ function resolveTargeting(targetCard) {
   } else if (kind === 'playBuffSeq') {
     // one pick of a sequential buff (Mahakam Adventurer / Guard)
     const { onPicked } = activeTargetingSnapshot;
-    shootProjectile(card.uid, targetCard.uid, () => {
-      applyPowerDelta(targetCard, 1, { side, card });
-      logMsg(`Your ${card.name} gives ${targetCard.name} +1.`);
+    const amt = amount || 1;
+    const apply = () => {
+      applyPowerDelta(targetCard, amt, { side, card });
+      logMsg(`Your ${card.name} gives ${targetCard.name}${targetCard.uid === card.uid ? ' (itself)' : ''} +${amt}.`);
       render();
       if (onPicked) onPicked();
-    }, 'buff');
+    };
+    if (targetCard.uid === card.uid) { SFX.buff(); apply(); }
+    else shootProjectile(card.uid, targetCard.uid, apply, 'buff');
   } else if (kind === 'reactionBuff') {
     // Dwarven Chariot's reaction
     shootProjectile(card.uid, targetCard.uid, () => {
@@ -6487,6 +6723,8 @@ function activateOrderAbility(side, card) {
   if (!ability) return;
   if (ability.isDiscardPlay) {
     activateDiscardPlayOrder(side, card, ability);
+  } else if (ability.seqBuff) {
+    runSeqBuffOrder(side, card, ability);
   } else if (ability.multiRefresh || ability.multiBuff) {
     const valid = new Set(ability.validTargets(side, card).map(c => c.uid));
     startTargeting({ side, card, kind: 'orderMulti', ability, max: ability.multiRefresh || ability.multiBuff, selected: [],

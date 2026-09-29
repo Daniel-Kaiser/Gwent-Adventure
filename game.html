@@ -575,9 +575,9 @@
   .hand {
     align-items: flex-end;
     /* Sit the hand at the very bottom of the screen with roughly the bottom
-       quarter of each card (130px tall -> ~33px) cut off by the screen edge:
-       6px hand padding + 6px body padding + 33px hidden = -45px. */
-    margin-bottom: -45px;
+       10% of each card (130px tall -> ~13px) cut off by the screen edge:
+       6px hand padding + 6px body padding + 11px hidden (+ the fan offset) = -23px. */
+    margin-bottom: -23px;
   }
   .hand .card {
     cursor: grab;
@@ -588,7 +588,7 @@
   }
   .hand .card:hover {
     /* lifts enough to reveal the part hidden below the screen edge */
-    transform: rotate(var(--rot, 0deg)) translateY(calc(var(--ty, 0px) - 44px)) scale(1.06);
+    transform: rotate(var(--rot, 0deg)) translateY(calc(var(--ty, 0px) - 30px)) scale(1.06);
     box-shadow: 0 10px 20px #000c;
     z-index: 999 !important;
   }

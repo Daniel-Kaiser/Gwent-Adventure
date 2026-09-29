@@ -1680,7 +1680,7 @@
     <h3>Turns</h3>
     <ul>
       <li>On your turn, play a card from your hand and/or activate a ready Order ability, then end your turn.</li>
-      <li>You may pass instead, locking in your current board for the rest of the round -- but once you've used an Order this turn, you must still play a card.</li>
+      <li>You may pass instead, locking in your current board for the rest of the round -- but once you've used an Order this turn, you must still play a card (unless your hand is empty -- Orders can be used with an empty hand, after which you simply end your turn).</li>
       <li>Once both players have passed, the round ends and scores are compared.</li>
     </ul>
     <h3>Cards</h3>
@@ -2741,11 +2741,18 @@ function isOrderReady(side, card) {
   if (!ability) return false;
   if (card.orderUsed) return false;
   if (card.playedTurn === undefined || state.turnCounter <= card.playedTurn) return false;
-  if (state.players[side].hand.length === 0) return false;
+  // (Orders are usable even with an empty hand.)
   // Orders that can only aim at specific targets (e.g. Blue Stripes Scout's
   // refresh) aren't ready at all while none exist.
   if (ability.validTargets && ability.validTargets(side, card).length === 0) return false;
   return true;
+}
+/* A side may end its turn once it has played a card -- or, with an empty
+   hand, once it has used at least one Order (the "must still play a card
+   after an Order" rule is waived when there's nothing left to play). */
+function turnEndable(side) {
+  const p = state.players[side];
+  return p.actedThisTurn || (p.orderUsedThisTurn && p.hand.length === 0);
 }
 function hasAnyUsableOrder(side) {
   return state.players[side].board.some(c => isOrderReady(side, c));
@@ -4484,7 +4491,6 @@ function aiPlayDamageFor(card, ordersUsed) {
    point of overkill, so a cheaper combo wins over a wasteful one. */
 function aiPlanComboKill() {
   const ai = state.players.ai;
-  if (ai.hand.length === 0) return null;
   const enemies = state.players.player.board.filter(c => c.power > 0);
   if (enemies.length === 0) return null;
   const prior = ordersUsedThisTurn('ai');
@@ -4552,7 +4558,7 @@ async function aiExecuteComboPlan(plan) {
     return t && t.power > 0 ? t : null;
   };
   let guard = 0;
-  while (guard++ < 20 && ai.hand.length > 0) {
+  while (guard++ < 20) {
     const target = targetAlive();
     if (!target) break;
     const ready = ai.board.filter(c => planned.has(c.uid) && isOrderReady('ai', c));
@@ -4607,7 +4613,6 @@ async function aiUseAvailableOrders(opts) {
   // retried forever, without being marked as used.
   const heldBack = new Set();
   while (guard++ < 20) {
-    if (ai.hand.length === 0) break;
     const readyAll = ai.board.filter(c => isOrderReady('ai', c) && !heldBack.has(c.uid));
     const readyCard = aiPickNextOrderCard(readyAll);
     if (!readyCard) break;
@@ -4728,6 +4733,20 @@ async function aiTakeTurn() {
   if (ai.orderUsedThisTurn) {
     // a beat between the last Order and whatever comes next (pass/play)
     await delay(500);
+  }
+
+  if (ai.hand.length === 0 && ai.orderUsedThisTurn) {
+    // Empty hand but used Order(s): nothing to play, so the must-play rule
+    // is waived -- end the turn normally (with the usual end-of-turn draw).
+    render();
+    setTimeout(() => {
+      flyDraw('ai', () => {
+        endOfTurnDraw('ai');
+        render();
+        endTurn('ai');
+      });
+    }, 400);
+    return;
   }
 
   let decision = decideAiAction();
@@ -6191,6 +6210,7 @@ function applyOrderAbility(side, card, ability, target, onDone) {
     if (ability.isScorch) logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order.`);
     else logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order on ${target.name}${itself}.`);
     if (onDone) onDone();
+    if (side === 'player') maybeAutoEndTurn('player');
   };
   if (ability.isDamage && target.uid !== card.uid) {
     shootProjectile(card.uid, target.uid, () => {
@@ -6603,7 +6623,7 @@ function renderCoin() {
     text = state.phase === 'playing' ? 'Enemy Turn' : '—';
     label.classList.add('enemy');
     btn.classList.add('disabled');
-  } else if (state.players.player.actedThisTurn) {
+  } else if (turnEndable('player')) {
     text = 'End Turn';
     label.classList.add('active');
     btn.classList.remove('disabled');
@@ -6821,7 +6841,7 @@ function maybeAutoEndTurn(side) {
   if (state.phase !== 'playing') return;
   if (state.activeTurn !== side) return;
   if (state.players[side].passed) return;
-  if (!state.players[side].actedThisTurn) return;
+  if (!turnEndable(side)) return;
   if (activeTargeting) return; // don't auto-end mid-targeting
   if (hasAnyUsableOrder(side)) return;
   // The player always ends their own turn manually unless they've turned
@@ -6834,7 +6854,7 @@ function maybeAutoEndTurn(side) {
   if (side === 'player' && !autoEndTurnEnabled) return;
   setTimeout(() => {
     if (state.phase === 'playing' && state.activeTurn === side &&
-        state.players[side].actedThisTurn && !state.players[side].passed &&
+        turnEndable(side) && !state.players[side].passed &&
         !activeTargeting && pendingPlayTokenSpawns === 0 && !hasAnyUsableOrder(side)) {
       if (side === 'player') {
         endPlayerTurnWithDraw();
@@ -6961,7 +6981,8 @@ function maybeAutoPass() {
   if (state && state.tutorial && !tutorialHandsOff) return;
   const canAutoPass = state.phase === 'playing' && state.activeTurn === 'player' &&
     !state.players.player.passed && !state.players.player.actedThisTurn &&
-    !state.players.player.orderUsedThisTurn && state.players.player.hand.length === 0;
+    !state.players.player.orderUsedThisTurn && state.players.player.hand.length === 0 &&
+    !hasAnyUsableOrder('player');
   if (!canAutoPass) return;
 
   autoPassing = true;
@@ -7012,7 +7033,7 @@ function coinClick() {
   if (state && state.tutorial && !tutorialAllows(coinBtn)) return;
   if (!coinIsUsable() || coinBusy || autoPassing) return;
   if (pendingPlayTokenSpawns > 0) return; // tokens still about to pop in
-  if (state.players.player.actedThisTurn) {
+  if (turnEndable('player')) {
     endPlayerTurnWithDraw();
   } else if (state.players.player.orderUsedThisTurn) {
     // used an Order but hasn't played a card yet -- the turn can't be

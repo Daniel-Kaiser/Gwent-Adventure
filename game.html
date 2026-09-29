@@ -2076,11 +2076,11 @@ const CARD_DB = {
   // Order: deal 2. Passive: +2 the first time each turn its owner buffs another card.
   gabor_zigrin:      { id: 'gabor_zigrin', name: 'Gabor Zigrin', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/gabor_zigrin.jpg', buffOnOwnerBuffOther: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
-  // Play (may): deal 2. Order: +3 to itself -- only once its owner has buffed a card this turn.
-  munro_bruys:       { id: 'munro_bruys', name: 'Munro Bruys', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/munro_bruys.jpg', playTargetDamage: 2,
-                       abilities: [ { trigger: 'order', needsTarget: false, isBuff: true, amount: 3,
+  // Play (may): deal 2. Order: +4 to itself -- only once its owner has buffed a card this turn.
+  munro_bruys:       { id: 'munro_bruys', name: 'Munro Bruys', power: 2, tier: 'silver', faction: 'mahakam', img: 'cards/munro_bruys.jpg', playTargetDamage: 2,
+                       abilities: [ { trigger: 'order', needsTarget: false, isBuff: true, amount: 4,
                                       validTargets: (side, card) => (state.players[side]._buffedAnyTurn === state.turnCounter ? [card] : []),
-                                      effect: (ctx) => applyPowerDelta(ctx.card, 3, ctx) } ] },
+                                      effect: (ctx) => applyPowerDelta(ctx.card, 4, ctx) } ] },
   // Play (may): +1 to another card in play. Passive: while in its owner's
   // discard pile, once its owner has buffed 2+ DIFFERENT cards in play in
   // one turn, it plays itself from there (see notePaulieBuff).
@@ -4766,7 +4766,7 @@ function aiDoomedTargetUid() {
 // once one precedes him).
 function aiPickNextOrderCard(candidates) {
   if (candidates.length === 0) return null;
-  // (Munro Bruys' self +3 goes last among what's ready; Sheldon Skaggs after
+  // (Munro Bruys' self +4 goes last among what's ready; Sheldon Skaggs after
   // buffs, since his damage grows with his power.)
   const rank = c => c.refreshOnSecondOrder ? 0 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
   return candidates.slice().sort((a, b) => rank(a) - rank(b))[0];

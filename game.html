@@ -17,17 +17,29 @@
     font-style: normal;
   }
   :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --panel2: #1c2330;
-    --gold: #d4af37;
+    /* ---- Palette: warm dark browns, gold accents, parchment text. Tweak here. ---- */
+    --bg: #1e140c;          /* page background */
+    --panel: #2a1c10;       /* modals, menus, panels */
+    --panel2: #3a2716;      /* board rows, raised surfaces */
+    --surface-hover: #4a321b;
+    --border: #6b4e2a;      /* default panel/button borders */
+    --border-strong: #8a6a38;
+    --accent: #e0bc5c;      /* gold accent: primary buttons, headings, focus */
+    --accent-hover: #e8c66a;
+    --accent-dim: #c9a24a;
+    --on-accent: #2a1a0a;   /* text on gold */
+    --btn2: #4a321b;        /* secondary (dark) buttons */
+    --btn2-hover: #5c3f22;
+    --gold: #d4af37;        /* tier colours */
     --silver: #b8c2cc;
     --bronze: #b08d57;
-    --accent: #4fa3ff;
-    --text: #e6edf3;
-    --muted: #8b96a5;
-    --good: #3fb950;
-    --bad: #f85149;
+    --text: #f1e3c2;        /* parchment */
+    --muted: #b8a383;
+    --good: #3fb950;        /* semantic: buff / win */
+    --bad: #f85149;         /* semantic: damage / loss / passed */
+    --player: #6fc3e8;      /* player vs opponent distinction */
+    --opponent: #d98cc0;
+    --highlight2: #5ad1c9;  /* tutorial secondary spotlight / targeting */
   }
   * { box-sizing: border-box; }
   button, input { font-family: inherit; }
@@ -35,7 +47,7 @@
   body {
     margin: 0;
     font-family: 'GwentFont', 'Segoe UI', system-ui, sans-serif;
-    background: radial-gradient(circle at 50% 0%, #1a2233, var(--bg) 70%);
+    background: radial-gradient(circle at 50% 0%, #3a2716, var(--bg) 70%);
     color: var(--text);
     height: 100vh;
     overflow: hidden;
@@ -55,7 +67,7 @@
      in startTutorial()/endTutorial()). */
   #hamburgerBtn {
     background: var(--panel);
-    border: 1px solid #2a3242;
+    border: 1px solid var(--border);
     border-radius: 6px;
     width: 36px;
     height: 36px;
@@ -66,7 +78,7 @@
     justify-content: center;
     gap: 5px;
   }
-  #hamburgerBtn:hover { background: #1d2531; }
+  #hamburgerBtn:hover { background: var(--surface-hover); }
   #hamburgerBtn span {
     display: block;
     width: 18px;
@@ -80,7 +92,7 @@
     left: 0;
     min-width: 170px;
     background: var(--panel);
-    border: 1px solid #2a3242;
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 8px;
     display: none;
@@ -100,7 +112,7 @@
     cursor: pointer;
     font-size: 13px;
   }
-  #hamburgerMenu button:hover { background: #1d2531; }
+  #hamburgerMenu button:hover { background: var(--surface-hover); }
   #volumeSliderRow {
     display: none;
     align-items: center;
@@ -117,7 +129,7 @@
   #logToggle {
     background: var(--panel);
     color: var(--text);
-    border: 1px solid #2a3242;
+    border: 1px solid var(--border);
     padding: 8px 14px;
     border-radius: 6px;
     font-size: 13px;
@@ -126,7 +138,7 @@
     align-items: center;
     gap: 6px;
   }
-  #logToggle:hover { background: #1d2531; }
+  #logToggle:hover { background: var(--surface-hover); }
   #logToggle .arrow { transition: transform .15s ease; font-size: 10px; }
   #logToggle.open .arrow { transform: rotate(180deg); }
   #log {
@@ -137,7 +149,7 @@
     max-height: 280px;
     overflow-y: auto;
     background: var(--panel);
-    border: 1px solid #2a3242;
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 12px;
@@ -194,20 +206,20 @@
     align-items: center;
     justify-content: center;
     flex-wrap: nowrap;
-    border: 1px solid #263041;
+    border: 1px solid var(--border);
     position: relative;
     overflow: hidden;
   }
 
-  .side.opponent { border-bottom: 3px solid #55425a; }
-  .side.player { border-top: 3px solid #2d5a6b; }
-  .side.dragOver { background: #232c3d; border-color: var(--accent); }
+  .side.opponent { border-bottom: 3px solid #6b3f52; }
+  .side.player { border-top: 3px solid #8a6a38; }
+  .side.dragOver { background: var(--surface-hover); border-color: var(--accent); }
 
   .card {
     width: 92px;
     height: 130px;
     border-radius: 8px;
-    background: linear-gradient(160deg, #2a3342, #1a212c);
+    background: linear-gradient(160deg, #3a2716, #24170c);
     border: none;
     position: relative;
     display: flex;
@@ -552,7 +564,7 @@
     height: 169px;
     border-radius: 8px;
     border: 2px dashed var(--accent);
-    background: rgba(79, 163, 255, 0.12);
+    background: rgba(224, 188, 92, 0.12);
     flex-shrink: 0;
     box-shadow: 0 0 12px -2px var(--accent) inset;
   }
@@ -646,7 +658,7 @@
     background-image: url('icons/cardback.png');
     background-size: cover;
     background-position: center;
-    border: 1px solid #4a5568;
+    border: 1px solid var(--border);
     box-shadow: 0 4px 8px #0007;
     flex-shrink: 0;
     transform: rotate(var(--rot, 0deg)) translateY(var(--ty, 0px));
@@ -671,7 +683,7 @@
     background-image: url('icons/cardback.png');
     background-size: cover;
     background-position: center;
-    border: 1px solid #4a5568;
+    border: 1px solid var(--border);
     box-shadow: 0 4px 10px #0009;
   }
   .pile .pileStack::before,
@@ -687,8 +699,8 @@
   .pile .pileStack::after { top: 6px; left: 6px; }
   .pile .pileStack.empty {
     background-image: none;
-    background: #1a212c;
-    border: 2px dashed #3a4556;
+    background: #24170c;
+    border: 2px dashed var(--border);
     box-shadow: none;
   }
   .pile .pileStack.empty::before,
@@ -735,9 +747,9 @@
     pointer-events: auto;
   }
   .pile .drawsLeftBadge.none {
-    background: linear-gradient(#4a4f58, #2c3038);
+    background: linear-gradient(#4a3a28, #2c2014);
     border-color: #ffffff44;
-    color: #c9ced6;
+    color: var(--muted);
   }
 
   .flyingCard { pointer-events: none; }
@@ -764,8 +776,8 @@
   .scoreBlock.me .pip.won { background: var(--good); border-color: var(--good); }
   .scoreBlock .scoreVal { font-size: 30px; font-weight: 800; line-height: 1; }
   .scoreBlock .scoreTag { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .scoreBlock.opp .scoreVal { color: #d98cc0; }
-  .scoreBlock.me .scoreVal { color: #6fc3e8; }
+  .scoreBlock.opp .scoreVal { color: var(--opponent); }
+  .scoreBlock.me .scoreVal { color: var(--player); }
 
   #coinBtn {
     position: relative;
@@ -829,7 +841,7 @@
   #coinImg.flash { animation: coinFlash .5s ease-out; }
 
   button.secondary {
-    background: #2d3646;
+    background: var(--btn2);
     color: var(--text);
     border: none;
     font-weight: 700;
@@ -898,7 +910,7 @@
   }
   #overlayBox button {
     background: var(--accent);
-    color: #04121f;
+    color: var(--on-accent);
     border: none;
     font-weight: 700;
     padding: 10px 20px;
@@ -907,7 +919,7 @@
     font-size: 14px;
     margin: 4px;
   }
-  #overlayBox button.secondary { background: #2d3646; color: var(--text); }
+  #overlayBox button.secondary { background: var(--btn2); color: var(--text); }
 
   .roundScoreTable {
     display: flex;
@@ -1007,7 +1019,7 @@
   #discardModalHint { opacity: .8; font-size: 13px; }
   #discardModalSelect {
     background: var(--accent);
-    color: #04121f;
+    color: var(--on-accent);
     border: none;
     font-weight: 700;
     padding: 8px 20px;
@@ -1114,7 +1126,7 @@
   #deckPickModalHint { opacity: .8; font-size: 13px; }
   #deckPickModalSelect {
     background: var(--accent);
-    color: #04121f;
+    color: var(--on-accent);
     border: none;
     font-weight: 700;
     padding: 8px 20px;
@@ -1230,7 +1242,7 @@
     letter-spacing: 2px;
     padding: 18px 56px;
     background: var(--accent);
-    color: #04121f;
+    color: var(--on-accent);
     border: none;
     border-radius: 8px;
     cursor: pointer;
@@ -1245,16 +1257,16 @@
     font-size: 14px;
     letter-spacing: 1.5px;
     padding: 10px 32px;
-    background: #13294a;
-    color: #e7edf3;
-    border: 2px solid #5a6b7d;
+    background: var(--btn2);
+    color: var(--text);
+    border: 2px solid var(--border-strong);
     border-radius: 8px;
     cursor: pointer;
     font-weight: 700;
     box-shadow: 0 6px 16px #0007;
     transition: transform .15s ease, filter .15s ease, background-color .15s ease;
   }
-  .titleSecondaryBtn:hover { background-color: #1e3d6b; transform: translateY(-2px); }
+  .titleSecondaryBtn:hover { background-color: var(--btn2-hover); transform: translateY(-2px); }
 
   /* ---- Settings modal (main menu) ---- */
   #settingsModal {
@@ -1276,9 +1288,9 @@
   .settingsDesc { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
   .settingsToggle {
     min-width: 58px; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 700;
-    border: 2px solid #5a6b7d; background: #13294a; color: #e7edf3;
+    border: 2px solid var(--border-strong); background: var(--btn2); color: var(--text);
   }
-  .settingsToggle.on { background: var(--accent); color: #04121f; border-color: var(--accent); }
+  .settingsToggle.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 
   /* ---- Tutorial modal ---- */
   #tutorialModal {
@@ -1348,7 +1360,7 @@
     position: fixed;
     border: 3px solid var(--accent);
     border-radius: 10px;
-    box-shadow: 0 0 0 4px #4fa3ff55, 0 0 22px 2px var(--accent);
+    box-shadow: 0 0 0 4px #e0bc5c55, 0 0 22px 2px var(--accent);
     z-index: 155;
     pointer-events: none;
     transition: all .18s ease;
@@ -1356,8 +1368,8 @@
     animation: tutorialPulse 1.6s ease-in-out infinite;
   }
   @keyframes tutorialPulse {
-    0%, 100% { box-shadow: 0 0 0 4px #4fa3ff55, 0 0 18px 2px var(--accent); }
-    50% { box-shadow: 0 0 0 8px #4fa3ff33, 0 0 28px 6px var(--accent); }
+    0%, 100% { box-shadow: 0 0 0 4px #e0bc5c55, 0 0 18px 2px var(--accent); }
+    50% { box-shadow: 0 0 0 8px #e0bc5c33, 0 0 28px 6px var(--accent); }
   }
   /* A second, cooler-toned spotlight shown alongside the primary one -- e.g.
      the card to drag AND the row to drop it on, or the card to click AND
@@ -1365,9 +1377,9 @@
      once instead of making the player remember where the other one was. */
   #tutorialHighlight2 {
     position: fixed;
-    border: 3px dashed #ff9f4d;
+    border: 3px dashed var(--highlight2);
     border-radius: 10px;
-    box-shadow: 0 0 0 4px #ff9f4d33, 0 0 18px 2px #ff9f4d;
+    box-shadow: 0 0 0 4px #5ad1c933, 0 0 18px 2px var(--highlight2);
     z-index: 155;
     pointer-events: none;
     transition: all .18s ease;
@@ -1375,8 +1387,8 @@
     animation: tutorialPulse2 1.6s ease-in-out infinite;
   }
   @keyframes tutorialPulse2 {
-    0%, 100% { box-shadow: 0 0 0 4px #ff9f4d33, 0 0 14px 2px #ff9f4d; }
-    50% { box-shadow: 0 0 0 7px #ff9f4d22, 0 0 22px 5px #ff9f4d; }
+    0%, 100% { box-shadow: 0 0 0 4px #5ad1c933, 0 0 14px 2px #5ad1c9; }
+    50% { box-shadow: 0 0 0 7px #5ad1c922, 0 0 22px 5px #5ad1c9; }
   }
   #tutorialTooltip {
     position: fixed;
@@ -1494,7 +1506,7 @@
   #libraryFiltersBtn {
     background: #ffffff14;
     color: var(--text);
-    border: 1px solid #5a6b7d;
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 8px 16px;
     font-size: 13px;
@@ -1511,7 +1523,7 @@
     top: calc(100% + 6px);
     left: 0;
     background: var(--panel2);
-    border: 1px solid #5a6b7d;
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
     padding: 8px 0;
     min-width: 140px;
@@ -1614,8 +1626,8 @@
     cursor: pointer;
     font-size: 14px;
   }
-  #cancelTargetNo { background: #4a5568; color: #fff; }
-  #cancelTargetYes { background: #3d7fd6; color: #fff; }
+  #cancelTargetNo { background: var(--btn2); color: var(--text); border: 1px solid var(--border); }
+  #cancelTargetYes { background: var(--accent); color: var(--on-accent); }
 
   /* ---- Exit-to-main-menu confirmation dialog (same look as above) ---- */
   #mainMenuConfirmDialog {
@@ -1656,8 +1668,40 @@
     cursor: pointer;
     font-size: 14px;
   }
-  #mainMenuConfirmNo { background: #4a5568; color: #fff; }
-  #mainMenuConfirmYes { background: #3d7fd6; color: #fff; }
+  #mainMenuConfirmNo { background: var(--btn2); color: var(--text); border: 1px solid var(--border); }
+  #mainMenuConfirmYes { background: var(--accent); color: var(--on-accent); }
+
+  /* ---- Shared modal frame: gold hairline border on every dialog box ---- */
+  #settingsBox, #overlayBox, #libraryBox, #tutorialBox, #newGameBox,
+  #discardModalBox, #deckPickModalBox, #tutorialTooltip {
+    border: 1px solid var(--accent-dim);
+  }
+
+  /* ---- New Game chooser (title screen) ---- */
+  #newGameModal {
+    position: fixed; inset: 0; background: #0009;
+    display: none; align-items: center; justify-content: center;
+    z-index: 2100; /* above #titleScreen (2000) */
+  }
+  #newGameModal.show { display: flex; }
+  #newGameBox {
+    position: relative; width: 380px; max-width: calc(100vw - 32px);
+    background: var(--panel); border-radius: 14px; padding: 22px 26px 26px;
+    box-shadow: 0 16px 40px #000c; color: var(--text);
+    display: flex; flex-direction: column; align-items: stretch; gap: 12px;
+  }
+  #newGameBox h2 { margin: 0 0 6px; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; text-align: center; }
+  .newGameOption {
+    font-family: 'GwentFont', serif; font-size: 17px; letter-spacing: 1.5px; font-weight: 700;
+    padding: 14px 18px; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: var(--on-accent); border: 2px solid var(--accent-hover);
+    transition: transform .15s ease, filter .15s ease;
+  }
+  .newGameOption:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
+  .newGameOption:disabled {
+    background: #3a2f25; color: #8c7e6a; border-color: #54463a; cursor: not-allowed;
+  }
+  .newGameOption .comingSoon { display: block; font-family: 'BrandonGrotesque', 'Segoe UI', sans-serif; font-size: 11px; letter-spacing: .5px; font-weight: 400; margin-top: 3px; }
 </style>
 </head>
 <body>
@@ -1691,6 +1735,16 @@
     </ul>
     <h3>Between Rounds</h3>
     <p>Cards used stay in the discard pile -- they don't return to your hand or deck. Manage your cards carefully across all three rounds!</p>
+  </div>
+</div>
+
+<div id="newGameModal">
+  <div id="newGameBox">
+    <button id="newGameCloseBtn" class="modalCloseBtn" aria-label="Close">&times;</button>
+    <h2>New Game</h2>
+    <button id="quickGameBtn" class="newGameOption">Quick Game vs AI</button>
+    <button id="challengeFriendBtn" class="newGameOption" disabled title="Coming soon">Challenge a Friend<span class="comingSoon">Coming soon</span></button>
+    <button id="tavernRunBtn" class="newGameOption" disabled title="Coming soon">Tavern Run<span class="comingSoon">Coming soon</span></button>
   </div>
 </div>
 
@@ -7753,12 +7807,23 @@ document.getElementById('clickToStartOverlay').addEventListener('click', () => {
   MenuMusic.start();
 }, { once: true });
 
-document.getElementById('titleNewGameBtn').addEventListener('click', () => {
+// "New Game" opens a chooser: Quick Game vs AI (the classic random-deck
+// game) plus two modes that aren't available yet (disabled buttons).
+const newGameModal = document.getElementById('newGameModal');
+function closeNewGameModal() { newGameModal.classList.remove('show'); }
+function startQuickGameFromTitle() {
+  closeNewGameModal();
   document.getElementById('titleScreen').style.display = 'none';
   MenuMusic.fadeOutAndStop(1500);
   Music.start(1500);
   startNewGame();
-});
+}
+document.getElementById('titleNewGameBtn').addEventListener('click', () => newGameModal.classList.add('show'));
+document.getElementById('newGameCloseBtn').addEventListener('click', closeNewGameModal);
+newGameModal.addEventListener('click', (e) => { if (e.target === newGameModal) closeNewGameModal(); });
+document.getElementById('quickGameBtn').addEventListener('click', startQuickGameFromTitle);
+// hover sound only on the enabled option (disabled buttons get no mouse events)
+document.getElementById('quickGameBtn').addEventListener('mouseenter', () => SFX.buttonHover());
 
 const tutorialModal = document.getElementById('tutorialModal');
 function closeTutorialModal() { tutorialModal.classList.remove('show'); }

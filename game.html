@@ -2867,14 +2867,25 @@ function aiDethmoldDiscardFavorable(hypothetical) {
   const o = aiScorchOutcome(hypothetical, true);
   return !!o && o.enemy > 0 && o.enemy > o.own;
 }
+// Shared Scorch-style resolution: scorch sfx + flame kill animation on every
+// target; onDone fires once all of them have finished. Used by Scorch,
+// Villentretenmerth, King Henselt, Pyrotechnician and Dethmold's discard.
+function burnCardsInPlay(cards, onDone) {
+  if (!cards.length) { if (onDone) onDone(); return; }
+  SFX.burn();
+  let remaining = cards.length;
+  cards.forEach(c => killCardFromBoard(c, { flame: true }, () => {
+    remaining--;
+    if (remaining === 0 && onDone) onDone();
+  }));
+}
 // King Henselt's Order: discard the highest card(s) in play right away
 // (both boards, ties all, Henselt himself if tied), burning like Scorch.
 function resolveHighestDiscardOrder(side, card) {
   const targets = highestCardsInPlay();
   if (targets.length === 0) { logMsg(`${card.name}'s Order finds nothing to discard.`); return; }
   logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} discards ${targets.map(t => t.name).join(', ')} (${targets[0].power} power).`);
-  SFX.burn();
-  targets.forEach(t => killCardFromBoard(t, { flame: true }, () => render()));
+  burnCardsInPlay(targets, () => render());
 }
 function resolveDethmoldDiscard(side, card, onDone) {
   pendingPlayTokenSpawns++; // hold the turn open until the discards finish
@@ -2883,11 +2894,7 @@ function resolveDethmoldDiscard(side, card, onDone) {
     const targets = highestCardsInPlay();
     if (targets.length === 0) { done(); return; }
     logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} discards ${targets.map(t => t.name).join(', ')} (${targets[0].power} power).`);
-    let remaining = targets.length;
-    targets.forEach(t => killCardFromBoard(t, {}, () => {
-      remaining--;
-      if (remaining === 0) { render(); done(); }
-    }));
+    burnCardsInPlay(targets, () => { render(); done(); });
     render();
   }, 400);
 }
@@ -3705,12 +3712,7 @@ function resolveScorch(ctx) {
     const maxPower = Math.max(...inPlay.map(x => x.card.power));
     const targets = inPlay.filter(x => x.card.power === maxPower);
     logMsg(`Scorch incinerates ${targets.map(t => t.card.name).join(', ')} (${maxPower} power).`);
-    SFX.burn();
-    let remaining = targets.length;
-    targets.forEach(({ card }) => killCardFromBoard(card, { flame: true }, () => {
-      remaining--;
-      if (remaining === 0) finishResolve();
-    }));
+    burnCardsInPlay(targets.map(t => t.card), finishResolve);
   } else {
     finishResolve();
   }
@@ -3775,8 +3777,7 @@ function resolveVillentretenmerth(ctx) {
     const maxPower = Math.max(...inPlay.map(x => x.card.power));
     const targets = inPlay.filter(x => x.card.power === maxPower);
     logMsg(`Villentretenmerth discards ${targets.map(t => t.card.name).join(', ')} (${maxPower} power).`);
-    SFX.burn();
-    targets.forEach(({ card }) => killCardFromBoard(card, { flame: true }));
+    burnCardsInPlay(targets.map(t => t.card));
   }
 }
 

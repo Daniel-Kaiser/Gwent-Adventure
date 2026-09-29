@@ -1680,7 +1680,7 @@
     <h3>Turns</h3>
     <ul>
       <li>On your turn, play a card from your hand and/or activate a ready Order ability, then end your turn.</li>
-      <li>You may pass instead, locking in your current board for the rest of the round -- but once you've used an Order this turn, you must still play a card (unless your hand is empty -- Orders can be used with an empty hand, after which you simply end your turn).</li>
+      <li>You may pass instead, locking in your current board for the rest of the round -- but once you've used an Order this turn, you must still play a card. If your hand is empty, you can only use Orders after having played your last card that same turn.</li>
       <li>Once both players have passed, the round ends and scores are compared.</li>
     </ul>
     <h3>Cards</h3>
@@ -2741,18 +2741,18 @@ function isOrderReady(side, card) {
   if (!ability) return false;
   if (card.orderUsed) return false;
   if (card.playedTurn === undefined || state.turnCounter <= card.playedTurn) return false;
-  // (Orders are usable even with an empty hand.)
+  // With an empty hand, Orders are only usable once a card has already been
+  // played this turn (you played your last card and can still use Orders);
+  // an empty hand at the start of the turn means no Orders.
+  if (state.players[side].hand.length === 0 && !state.players[side].actedThisTurn) return false;
   // Orders that can only aim at specific targets (e.g. Blue Stripes Scout's
   // refresh) aren't ready at all while none exist.
   if (ability.validTargets && ability.validTargets(side, card).length === 0) return false;
   return true;
 }
-/* A side may end its turn once it has played a card -- or, with an empty
-   hand, once it has used at least one Order (the "must still play a card
-   after an Order" rule is waived when there's nothing left to play). */
+/* A side may end its turn once it has played a card this turn. */
 function turnEndable(side) {
-  const p = state.players[side];
-  return p.actedThisTurn || (p.orderUsedThisTurn && p.hand.length === 0);
+  return !!state.players[side].actedThisTurn;
 }
 function hasAnyUsableOrder(side) {
   return state.players[side].board.some(c => isOrderReady(side, c));
@@ -4735,17 +4735,13 @@ async function aiTakeTurn() {
     await delay(500);
   }
 
-  if (ai.hand.length === 0 && ai.orderUsedThisTurn) {
-    // Empty hand but used Order(s): nothing to play, so the must-play rule
-    // is waived -- end the turn normally (with the usual end-of-turn draw).
+  if (ai.hand.length === 0) {
+    // Empty hand at the start of the turn: no Orders are usable, nothing to
+    // play -- pass (safety net so the turn can never get stuck).
+    await delay(500);
+    passTurn('ai');
     render();
-    setTimeout(() => {
-      flyDraw('ai', () => {
-        endOfTurnDraw('ai');
-        render();
-        endTurn('ai');
-      });
-    }, 400);
+    playAiPassRing(() => endTurn('ai'));
     return;
   }
 

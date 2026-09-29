@@ -2098,12 +2098,11 @@ const CARD_DB = {
                                       effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
 
   /* ---- Mahakam golds ---- */
-  // Play AND Order: up to three OTHER cards in play get +1 each (distinct, finish early).
-  percival_schuttenbach: { id: 'percival_schuttenbach', name: 'Percival Schuttenbach', power: 3, tier: 'gold', faction: 'mahakam', img: 'cards/percival_schuttenbach.jpg',
-                       playBuffMulti: 3,
-                       abilities: [ { trigger: 'order', needsTarget: true, multiBuff: 3,
-                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial),
-                                      effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
+  // Order: +1 to another card. Refreshes whenever its owner plays a card with a
+  // buff ability (see cardHasBuffAbility / refreshOnOrderCardEntered).
+  percival_schuttenbach: { id: 'percival_schuttenbach', name: 'Percival Schuttenbach', power: 4, tier: 'gold', faction: 'mahakam', img: 'cards/percival_schuttenbach.jpg',
+                       refreshOnBuffCardPlay: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
   // Play: discard the highest card(s) in play, ignoring its owner's buffed cards.
   saesenthessis:     { id: 'saesenthessis', name: 'Saesenthessis', power: 2, tier: 'gold', faction: 'mahakam', img: 'cards/saesenthessis.jpg',
                        abilities: [ { trigger: 'onPlay', effect: resolveSaesenthessis } ] },
@@ -2111,11 +2110,10 @@ const CARD_DB = {
   brouver_hoog:      { id: 'brouver_hoog', name: 'Brouver Hoog', power: 4, tier: 'gold', faction: 'mahakam', img: 'cards/brouver_hoog.jpg',
                        abilities: [ { trigger: 'order', needsTarget: false, isBuff: true, doublesSelf: true,
                                       effect: (ctx) => applyPowerDelta(ctx.card, Math.max(0, ctx.card.power), ctx) } ] },
-  // Order: up to two OTHER cards +1. Refreshes the first time its owner buffs it each turn.
-  eudora_breckenriggs: { id: 'eudora_breckenriggs', name: 'Eudora Breckenriggs', power: 5, tier: 'gold', faction: 'mahakam', img: 'cards/eudora_breckenriggs.jpg', refreshOnBuffed: true,
-                       abilities: [ { trigger: 'order', needsTarget: true, multiBuff: 2,
-                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial),
-                                      effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
+  // Passive: the first time each turn its owner buffs it, its owner may give
+  // another card +2 (Dwarven Chariot mechanism).
+  eudora_breckenriggs: { id: 'eudora_breckenriggs', name: 'Eudora Breckenriggs', power: 4, tier: 'gold', faction: 'mahakam', img: 'cards/eudora_breckenriggs.jpg',
+                       chariotOnOwnerBuff: 2, abilities: [] },
   // Play AND Order: +4 to a card in play (itself included).
   harald_gord:       { id: 'harald_gord', name: 'Harald Gord', power: 1, tier: 'gold', faction: 'mahakam', img: 'cards/harald_gord.jpg',
                        playBuffRepeat: 1, playBuffAmount: 4, playBuffIncludeSelf: true,
@@ -2985,8 +2983,43 @@ function resolveDethmoldDiscard(side, card, onDone) {
    an Order ability into play -- a hand play or a revive (both reach
    notifyAllyPlay) or an Order-bearing token (createTokensRightOf). No
    per-turn limit. The entering card itself is never the one refreshed. */
+/* Does this card have any ability that can give power to itself or other
+   cards (Play / Order / passive / reaction)? Derived from the card's data:
+   buff flags, plus any ability whose effect goes through applyPowerDelta
+   with a positive amount. Used by Percival Schuttenbach's refresh. */
+function cardHasBuffAbility(card) {
+  if (!card) return false;
+  if (card.playBuffRepeat || card.playBuffMulti || card.buffOnSecondOrder || card.buffOnOwnerBuffOther || card.chariotOnOwnerBuff) return true;
+  return (card.abilities || []).some(a => {
+    if (a.isBuff || a.multiBuff || a.seqBuff || a.doublesSelf) return true;
+    if (a.isDamage || a.isRefresh || a.isScorch || a.isDiscardPlay || typeof a.effect !== 'function') return false;
+    return fnGivesPower(a.effect, 2);
+  });
+}
+// Whether a function (or a named top-level helper it calls, `depth` levels
+// deep) applies a positive power delta.
+function fnGivesPower(fn, depth) {
+  const src = fn.toString();
+  if (/applyPowerDelta\([^,]+,\s*[^-\s]/.test(src)) return true;
+  if (depth <= 0) return false;
+  const names = new Set([...src.matchAll(/\b([A-Za-z_]\w*)\s*\(/g)].map(m => m[1]));
+  for (const n of names) {
+    if (n === 'applyPowerDelta' || n === 'applyDamage') continue;
+    const f = window[n];
+    if (typeof f === 'function' && f !== fn && fnGivesPower(f, depth - 1)) return true;
+  }
+  return false;
+}
 function refreshOnOrderCardEntered(side, enteredCard) {
-  if (!enteredCard || !findOrderAbility(enteredCard)) return;
+  if (!enteredCard) return;
+  // Percival Schuttenbach: refreshes whenever its owner plays a card with a buff ability
+  if (cardHasBuffAbility(enteredCard)) {
+    state.players[side].board.filter(c => c.refreshOnBuffCardPlay && c.uid !== enteredCard.uid && c.orderUsed).forEach(c => {
+      refreshOrder(c);
+      logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name}'s Order is refreshed.`);
+    });
+  }
+  if (!findOrderAbility(enteredCard)) return;
   state.players[side].board.filter(c => c.refreshOnOrderCardPlay && c.uid !== enteredCard.uid && c.orderUsed).forEach(c => {
     refreshOrder(c);
     logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${c.name}'s Order is refreshed.`);
@@ -3420,7 +3453,7 @@ function runBuffReaction(r) {
       const others = [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial);
       if (others.length === 0) { resolve(); return; }
       if (side === 'player') {
-        logMsg(`Your ${card.name} lets you give another card +1.`);
+        logMsg(`Your ${card.name} lets you give another card +${card.chariotOnOwnerBuff}.`);
         startTargeting({ side: 'player', card, kind: 'reactionBuff', excludeSelf: true, amount: card.chariotOnOwnerBuff,
                          onDone: () => { render(); resolve(); } });
       } else {
@@ -5832,6 +5865,7 @@ function aiBestRefreshPlay(hand) {
       if (n > 0) cands.push({ c, v: 10 + n });
     }
     if (findOrderAbility(c) && ai.board.some(d => d.refreshOnOrderCardPlay && d.orderUsed && worth(d))) cands.push({ c, v: 5 });
+    if (cardHasBuffAbility(c) && ai.board.some(d => d.refreshOnBuffCardPlay && d.orderUsed)) cands.push({ c, v: 5 });
     if ((c.playBuffRepeat || c.playBuffMulti) && ai.board.some(d => d.id === 'brouver_hoog' && isOrderReady('ai', d))) cands.push({ c, v: 4 });
     if ((c.playBuffRepeat || c.playBuffMulti) && ai.board.some(d => d.refreshOnBuffed && d.orderUsed && d._ownerBuffedTurn !== t && worth(d))) cands.push({ c, v: 6 });
   });

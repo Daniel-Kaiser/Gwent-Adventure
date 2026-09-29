@@ -39,7 +39,10 @@
     --bad: #f85149;         /* semantic: damage / loss / passed */
     --player: #6fc3e8;      /* player vs opponent distinction */
     --opponent: #d98cc0;
-    --highlight2: #5ad1c9;  /* tutorial secondary spotlight / targeting */
+    --highlight2: #5ad1c9;
+    --popup-btn: #f1e3c2;   /* light popup buttons (confirm dialogs, New Game) */
+    --popup-btn-hover: #fff4dc;
+    --popup-btn-text: #2a1a0a;  /* tutorial secondary spotlight / targeting */
   }
   * { box-sizing: border-box; }
   button, input { font-family: inherit; }
@@ -113,15 +116,6 @@
     font-size: 13px;
   }
   #hamburgerMenu button:hover { background: var(--surface-hover); }
-  #volumeSliderRow {
-    display: none;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 10px 4px;
-  }
-  #volumeSliderRow.show { display: flex; }
-  #volumeSliderRow span { font-size: 12px; color: var(--muted); min-width: 30px; text-align: right; }
-  #volumeSlider { flex: 1; accent-color: var(--accent); }
 
   /* ---- Log dropdown, pinned next to the hamburger menu at the far
      top-left corner of the screen. ---- */
@@ -1286,11 +1280,24 @@
   .settingsRow input[type=range] { flex: 1; accent-color: var(--accent); }
   .settingsRow .settingsVal { font-size: 12px; color: var(--muted); min-width: 34px; text-align: right; }
   .settingsDesc { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
-  .settingsToggle {
-    min-width: 58px; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 700;
-    border: 2px solid var(--border-strong); background: var(--btn2); color: var(--text);
+  /* Toggle switch: "On"/"Off" label left of a pill track with a sliding knob. */
+  .settingsSwitchWrap { display: flex; align-items: center; gap: 10px; }
+  .settingsSwitchLabel { font-size: 13px; color: var(--muted); min-width: 24px; text-align: right; }
+  .settingsSwitch {
+    position: relative; width: 46px; height: 26px; flex: 0 0 auto;
+    border-radius: 13px; cursor: pointer; padding: 0;
+    background: #5a4430; border: 1px solid var(--border);
+    transition: background-color .18s ease, border-color .18s ease;
   }
-  .settingsToggle.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  .settingsSwitch::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--text); box-shadow: 0 1px 3px #0008;
+    transition: transform .18s ease;
+  }
+  .settingsSwitch[aria-checked="true"] { background: var(--accent); border-color: var(--accent-hover); }
+  .settingsSwitch[aria-checked="true"]::after { transform: translateX(20px); background: #fffaf0; }
+  .settingsSwitch:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
 
   /* ---- Tutorial modal ---- */
   #tutorialModal {
@@ -1626,8 +1633,7 @@
     cursor: pointer;
     font-size: 14px;
   }
-  #cancelTargetNo { background: var(--btn2); color: var(--text); border: 1px solid var(--border); }
-  #cancelTargetYes { background: var(--accent); color: var(--on-accent); }
+  #cancelTargetNo, #cancelTargetYes { background: var(--popup-btn); color: var(--popup-btn-text); }
 
   /* ---- Exit-to-main-menu confirmation dialog (same look as above) ---- */
   #mainMenuConfirmDialog {
@@ -1668,8 +1674,9 @@
     cursor: pointer;
     font-size: 14px;
   }
-  #mainMenuConfirmNo { background: var(--btn2); color: var(--text); border: 1px solid var(--border); }
-  #mainMenuConfirmYes { background: var(--accent); color: var(--on-accent); }
+  /* Popup buttons (confirm dialogs, New Game chooser): light cream, dark text. */
+  #mainMenuConfirmBox button { background: var(--popup-btn); color: var(--popup-btn-text); }
+  #mainMenuConfirmBox button:hover, #cancelTargetNo:hover, #cancelTargetYes:hover { background: var(--popup-btn-hover); }
 
   /* ---- Shared modal frame: gold hairline border on every dialog box ---- */
   #settingsBox, #overlayBox, #libraryBox, #tutorialBox, #newGameBox,
@@ -1692,15 +1699,12 @@
   }
   #newGameBox h2 { margin: 0 0 6px; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; text-align: center; }
   .newGameOption {
-    font-family: 'GwentFont', serif; font-size: 17px; letter-spacing: 1.5px; font-weight: 700;
-    padding: 14px 18px; border-radius: 8px; cursor: pointer;
-    background: var(--accent); color: var(--on-accent); border: 2px solid var(--accent-hover);
-    transition: transform .15s ease, filter .15s ease;
+    /* same convention as the confirm popups' buttons */
+    border: none; font-weight: 700; font-size: 14px; border-radius: 6px; cursor: pointer;
+    padding: 11px 18px; background: var(--popup-btn); color: var(--popup-btn-text);
   }
-  .newGameOption:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
-  .newGameOption:disabled {
-    background: #3a2f25; color: #8c7e6a; border-color: #54463a; cursor: not-allowed;
-  }
+  .newGameOption:hover:not(:disabled) { background: var(--popup-btn-hover); }
+  .newGameOption:disabled { opacity: .45; cursor: not-allowed; }
   .newGameOption .comingSoon { display: block; font-family: 'BrandonGrotesque', 'Segoe UI', sans-serif; font-size: 11px; letter-spacing: .5px; font-weight: 400; margin-top: 3px; }
 </style>
 </head>
@@ -1771,12 +1775,12 @@
     </div>
     <div class="settingsRow">
       <label>Auto end turn</label>
-      <button type="button" id="settingsAutoEndTurnToggle" class="settingsToggle">Off</button>
+      <span class="settingsSwitchWrap"><span class="settingsSwitchLabel" id="settingsAutoEndTurnToggleLabel">Off</span><button type="button" id="settingsAutoEndTurnToggle" class="settingsSwitch" role="switch" aria-checked="false" aria-label="Auto end turn"></button></span>
     </div>
     <p class="settingsDesc">Automatically ends your turn when you have no actions left to do.</p>
     <div class="settingsRow">
       <label>Developer mode</label>
-      <button type="button" id="settingsDevModeToggle" class="settingsToggle">Off</button>
+      <span class="settingsSwitchWrap"><span class="settingsSwitchLabel" id="settingsDevModeToggleLabel">Off</span><button type="button" id="settingsDevModeToggle" class="settingsSwitch" role="switch" aria-checked="false" aria-label="Developer mode"></button></span>
     </div>
   </div>
 </div>
@@ -1839,12 +1843,7 @@
     <button id="newGameBtn">New Game</button>
     <button id="menuHowToPlayBtn">How to Play</button>
     <button id="menuMainMenuBtn">Main Menu</button>
-    <button id="menuAutoEndTurnBtn">Auto End Turn: Off</button>
-    <button id="menuVolumeBtn">Volume</button>
-    <div id="volumeSliderRow">
-      <input type="range" id="volumeSlider" min="0" max="100" value="15">
-      <span id="volumeSliderVal">15%</span>
-    </div>
+    <button id="menuSettingsBtn">Settings</button>
   </div>
 </div>
 <div id="logWrap">
@@ -6596,6 +6595,7 @@ function onTargetingDocumentClick(e) {
   if (!activeTargeting || targetingCancelConfirmOpen) return;
   if (e.target.closest && e.target.closest('.card.targetable')) return;
   if (e.target.closest && e.target.closest('#cancelTargetDialog')) return;
+  if (e.target.closest && (e.target.closest('#settingsModal') || e.target.closest('#hamburgerWrap'))) return;
   requestCancelTargeting();
 }
 
@@ -7620,6 +7620,9 @@ let spaceHeld = false;
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Space' && e.key !== ' ') return;
   if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  // (Space on a focused switch/button inside the Settings popup toggles it)
+  if (e.target && e.target.closest && e.target.closest('#settingsModal, #newGameModal')) return;
+  if (!state) return;
   e.preventDefault();
   if (spaceHeld) return; // ignore key-repeat
   spaceHeld = true;
@@ -7898,22 +7901,20 @@ document.getElementById('titleLibraryBtn').addEventListener('click', () => {
 // button themselves -- and always forced off for the tutorial, which walks
 // the player through ending their own turn.
 let autoEndTurnEnabled = false;
+function setSwitchState(id, on) {
+  const btn = document.getElementById(id);
+  if (btn) btn.setAttribute('aria-checked', on ? 'true' : 'false');
+  const label = document.getElementById(id + 'Label');
+  if (label) label.textContent = on ? 'On' : 'Off';
+}
 function updateAutoEndTurnButtons() {
-  const label = 'Auto End Turn: ' + (autoEndTurnEnabled ? 'On' : 'Off');
-  const menuBtn = document.getElementById('menuAutoEndTurnBtn');
-  if (menuBtn) menuBtn.textContent = label;
-  const settingsBtn = document.getElementById('settingsAutoEndTurnToggle');
-  if (settingsBtn) {
-    settingsBtn.textContent = autoEndTurnEnabled ? 'On' : 'Off';
-    settingsBtn.classList.toggle('on', autoEndTurnEnabled);
-  }
+  setSwitchState('settingsAutoEndTurnToggle', autoEndTurnEnabled);
 }
 function toggleAutoEndTurn() {
   autoEndTurnEnabled = !autoEndTurnEnabled;
   updateAutoEndTurnButtons();
 }
 document.getElementById('settingsAutoEndTurnToggle').addEventListener('click', toggleAutoEndTurn);
-document.getElementById('menuAutoEndTurnBtn').addEventListener('click', toggleAutoEndTurn);
 updateAutoEndTurnButtons();
 document.getElementById('libraryCloseBtn').addEventListener('click', closeLibraryModal);
 libraryModal.addEventListener('click', (e) => { if (e.target === libraryModal) closeLibraryModal(); });
@@ -7942,52 +7943,33 @@ function libraryFiltersWrap_contains(target) {
    exit confirmation) and a live music-volume slider.
 ========================================================= */
 let hamburgerMenuOpen = false;
-let volumeSliderOpen = false;
 const hamburgerMenuEl = document.getElementById('hamburgerMenu');
-const volumeSliderRowEl = document.getElementById('volumeSliderRow');
-const volumeSliderEl = document.getElementById('volumeSlider');
-const volumeSliderValEl = document.getElementById('volumeSliderVal');
-
-volumeSliderEl.value = Math.round(Music.getVolume() * 100);
-volumeSliderValEl.textContent = `${volumeSliderEl.value}%`;
 
 function updateHamburgerMenuDom() {
   hamburgerMenuEl.classList.toggle('open', hamburgerMenuOpen);
-  volumeSliderRowEl.classList.toggle('show', hamburgerMenuOpen && volumeSliderOpen);
 }
 
 function closeHamburgerMenu() {
   hamburgerMenuOpen = false;
-  volumeSliderOpen = false;
   updateHamburgerMenuDom();
 }
 
 document.getElementById('hamburgerBtn').addEventListener('click', () => {
   hamburgerMenuOpen = !hamburgerMenuOpen;
-  if (!hamburgerMenuOpen) volumeSliderOpen = false;
   updateHamburgerMenuDom();
 });
 
-document.getElementById('menuVolumeBtn').addEventListener('click', () => {
-  volumeSliderOpen = !volumeSliderOpen;
-  updateHamburgerMenuDom();
-});
-
-// The in-game hamburger slider and the main-menu Settings slider both
-// drive the same Music volume and are kept in sync with each other.
+// Music volume lives in the Settings popup (title screen and in-game menu).
 const settingsVolumeSliderEl = document.getElementById('settingsVolumeSlider');
 const settingsVolumeValEl = document.getElementById('settingsVolumeVal');
 function setMusicVolumePct(pct) {
-  volumeSliderEl.value = pct;
-  volumeSliderValEl.textContent = `${pct}%`;
   settingsVolumeSliderEl.value = pct;
   settingsVolumeValEl.textContent = `${pct}%`;
   Music.setVolume(pct / 100);
   MenuMusic.setVolume(pct / 100);
 }
-settingsVolumeSliderEl.value = volumeSliderEl.value;
-settingsVolumeValEl.textContent = `${volumeSliderEl.value}%`;
-volumeSliderEl.addEventListener('input', () => setMusicVolumePct(Number(volumeSliderEl.value)));
+settingsVolumeSliderEl.value = Math.round(Music.getVolume() * 100);
+settingsVolumeValEl.textContent = `${settingsVolumeSliderEl.value}%`;
 settingsVolumeSliderEl.addEventListener('input', () => setMusicVolumePct(Number(settingsVolumeSliderEl.value)));
 
 /* =========================================================
@@ -7998,8 +7980,7 @@ let developerModeEnabled = false;
 const settingsModal = document.getElementById('settingsModal');
 const settingsDevModeToggle = document.getElementById('settingsDevModeToggle');
 function updateDevModeToggle() {
-  settingsDevModeToggle.textContent = developerModeEnabled ? 'On' : 'Off';
-  settingsDevModeToggle.classList.toggle('on', developerModeEnabled);
+  setSwitchState('settingsDevModeToggle', developerModeEnabled);
 }
 settingsDevModeToggle.addEventListener('click', () => {
   developerModeEnabled = !developerModeEnabled;
@@ -8012,6 +7993,9 @@ function openSettingsModal() {
 }
 function closeSettingsModal() { settingsModal.classList.remove('show'); }
 document.getElementById('titleSettingsBtn').addEventListener('click', openSettingsModal);
+// In-game: the dropdown's Settings item opens the same popup over the board.
+document.getElementById('menuSettingsBtn').addEventListener('click', () => { closeHamburgerMenu(); openSettingsModal(); });
+settingsModal.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSettingsModal(); });
 document.getElementById('settingsCloseBtn').addEventListener('click', closeSettingsModal);
 settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) closeSettingsModal(); });
 
@@ -8026,14 +8010,6 @@ document.querySelectorAll('#titleButtons button').forEach(btn => {
 // its own buttons are left alone so they can do their job.
 document.addEventListener('click', (e) => {
   if (!hamburgerMenuOpen) return;
-  if (volumeSliderOpen) {
-    // also exempt the Volume button itself -- otherwise the same click
-    // that just opened the slider immediately bubbles up here and closes
-    // it again before it's ever seen
-    if (e.target.closest('#volumeSlider') || e.target.closest('#menuVolumeBtn')) return;
-    closeHamburgerMenu();
-    return;
-  }
   if (e.target.closest('#hamburgerWrap')) return;
   closeHamburgerMenu();
 });

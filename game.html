@@ -3417,6 +3417,9 @@ function aiBuffTargetScore(c, source) {
   const t = state.turnCounter;
   if (c.refreshOnBuffed && c.orderUsed && c._ownerBuffedTurn !== t) s += 6;
   if (c.chariotOnOwnerBuff && c._ownerBuffedTurn !== t) s += 4;
+  // buffing a refresh-on-buff card whose Order is still unused would spend
+  // its once-per-turn refresh for nothing
+  if (c.refreshOnBuffed && !c.orderUsed && findOrderAbility(c) && c._ownerBuffedTurn !== t) s -= 3;
   if (c.tier === 'token') s -= 0.5;
   // Sheldon Skaggs' ready Order hits for his power (max 6)
   if (c.id === 'sheldon_skaggs' && !c.orderUsed && c.power < 6) s += 1;
@@ -4664,7 +4667,7 @@ function aiPlanComboKill() {
     const a = findOrderAbility(c);
     return a && a.isDamage;
   }).slice(0, 10);
-  const playOptions = [null, ...ai.hand.filter(c => aiPlayDamageFor(c, 0) > 0 || c.playDamagePlusOrdersUsed || c.playDamageFromDeckTop)];
+  const playOptions = [null, ...ai.hand.filter(c => aiPlayDamageFor(c, 0) > 0 || c.playDamagePlusOrdersUsed || c.playDamageFromDeckTop || c.playRefreshOrder || c.playRefreshMulti)];
   if (sources.length === 0 && playOptions.length === 1) return null;
   const trigValue = aiSecondOrderTriggerValue();
   // Ready single-target buff Orders that could refresh a used
@@ -4705,7 +4708,14 @@ function aiPlanComboKill() {
       dmg += (prior + orders) >= 1 ? 4 : 2;
       orders++;
     }
-    const pd = play ? aiPlayDamageFor(play, prior + orders) : 0;
+    let pd = play ? aiPlayDamageFor(play, prior + orders) : 0;
+    if (play && (play.playRefreshOrder || play.playRefreshMulti)) {
+      // Scout / Odrin / Foltest / Demavend played after the Orders: each
+      // refreshed (bronze/token) damage Order in the subset fires once more.
+      const amt = x => { const a = findOrderAbility(x); return a.amountFn ? a.amountFn('ai', x) : (a.amount || 0); };
+      pd = subset.filter(x => (x.tier === 'bronze' || x.tier === 'token') && (play.refreshAllowsScouts || x.id !== 'blue_stripes_scout'))
+        .map(amt).sort((a, b) => b - a).slice(0, play.playRefreshMulti || 1).reduce((t, v) => t + v, 0);
+    }
     return { total: dmg + pd, pd, reachesSecond, refreshPairs };
   };
 
@@ -4768,7 +4778,9 @@ function aiPickNextOrderCard(candidates) {
   if (candidates.length === 0) return null;
   // (Munro Bruys' self +4 goes last among what's ready; Sheldon Skaggs after
   // buffs, since his damage grows with his power.)
-  const rank = c => c.refreshOnSecondOrder ? 0 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
+  // (Smith / Berserker / Figgis / Xavier go before other buff Orders, so a
+  // buff can land on them AFTER their Order is spent and refresh it.)
+  const rank = c => c.refreshOnSecondOrder ? 0 : c.refreshOnBuffed ? 0.5 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
   return candidates.slice().sort((a, b) => rank(a) - rank(b))[0];
 }
 
@@ -4819,6 +4831,67 @@ function aiPassWhenAheadProbability(lead) {
   if (lead < 6) return 0;
   const t = Math.min(1, (lead - 6) / 9);
   return 0.15 + 0.75 * t * t * (3 - 2 * t);
+}
+
+/* ---- Conceding hopeless rounds. Once the player has passed, the AI gets
+   as many turns as it likes, so an OPTIMISTIC upper bound on the power
+   swing it could still make this round is: every hand card's power plus
+   its Play effect (damage counted as full removal, buffs, tokens, revives,
+   discard-highest removing the player's top card(s)), every Order on the
+   board or in hand at its best value times (1 + every way it could be
+   refreshed), per-turn passives times the number of turns left, and
+   discard-return passives. If even that can't overturn the deficit (ties
+   go to the starting player -- see endRound), the AI passes and saves its
+   cards. Never when the player already has a round win (a lost round would
+   lose the match). */
+function aiOrderBestValue(c) {
+  const a = findOrderAbility(c);
+  if (!a) return 0;
+  if (a.isScorch) return Math.max(0, ...state.players.player.board.map(e => e.power)) * 2;
+  if (a.isDamage) return Math.max(a.amount || 0, c.id === 'seltkirk' ? 4 : 0, a.amountFn ? 6 : 0);
+  if (a.isDiscardPlay) return Math.max(0, ...state.players.ai.graveyard.map(g => g.power)) + 6;
+  if (a.isRefresh) return 6 * (a.multiRefresh || 1);
+  if (a.multiBuff) return a.multiBuff;
+  if (a.seqBuff) return a.seqBuff * (a.amount || 1);
+  return Math.max(a.amount || 0, 6); // buffs (+1..+3), self-buffs (Angouleme +6), tokens
+}
+function aiMaxSwingUpperBound() {
+  const ai = state.players.ai, opp = state.players.player;
+  const hand = ai.hand, turns = Math.max(1, hand.length);
+  const topEnemy = Math.max(0, ...opp.board.map(e => e.power));
+  const topEnemyTotal = opp.board.filter(e => e.power === topEnemy).reduce((s, e) => s + e.power, 0);
+  const graveMax = Math.max(0, ...ai.graveyard.map(g => g.power));
+  let b = 0;
+  const refreshSources = hand.filter(c => c.playRefreshOrder || c.playRefreshMulti || c.playBuffRepeat || c.playBuffMulti || findOrderAbility(c)).length * 2
+    + [...ai.board, ...hand].filter(c => { const a = findOrderAbility(c); return a && (a.isRefresh || a.isBuff || a.multiBuff || a.seqBuff || a.needsTarget && !a.isDamage); }).length * 2 + 2;
+  hand.forEach(c => {
+    b += Math.max(0, c.power);
+    b += (c.playTargetDamage || 0) + (c.playDamagePlusOrdersUsed ? 6 : 0) + (c.playDamageFromDeckTop ? 10 : 0);
+    b += (c.playBuffRepeat || 0) * (c.playBuffAmount || 1) + (c.playBuffMulti || 0) + (c.id === 'siege_tower' ? 3 : 0);
+    if (c.special || c.id === 'villentretenmerth' || c.playDiscardHighestIfOrders) b += topEnemyTotal + 10;
+    if (c.discardChoice) b += graveMax + 10;
+    if (c.playRefreshOrder || c.playRefreshMulti) b += 6 * (c.playRefreshMulti || 1);
+    if (c.playMoveOnePower) b += 2;
+    if ((c.abilities || []).some(a => a.trigger === 'onPlay')) b += 6; // tokens etc.
+  });
+  [...ai.board, ...hand].forEach(c => {
+    if (findOrderAbility(c)) b += aiOrderBestValue(c) * (1 + refreshSources);
+    b += ((c.buffOnSecondOrder || 0) + (c.buffOnOwnerBuffOther || 0) + (c.chariotOnOwnerBuff || 0)) * turns;
+    if ((c.abilities || []).some(a => a.trigger === 'onAllyPlay')) b += turns;
+  });
+  ai.graveyard.forEach(g => {
+    if (g.returnOnSecondOrder || g.returnOnTwoDistinctBuffs || (g.abilities || []).some(a => a.trigger === 'passiveReturnOnGoldPlay')) b += g.power + 6;
+  });
+  return b;
+}
+function aiShouldConcedeRound() {
+  const ai = state.players.ai, opp = state.players.player;
+  if (!opp.passed || ai.passed || ai.orderUsedThisTurn) return false;
+  if (state.roundScores.some(r => r.winner === 'player')) return false;
+  const deficit = totalPower('player') - totalPower('ai');
+  const needed = deficit + (state.startingPlayer === 'ai' ? 0 : 1); // swing needed to win
+  if (needed <= 0) return false;
+  return aiMaxSwingUpperBound() < needed;
 }
 function aiShouldPassWhenAhead() {
   const ai = state.players.ai, opp = state.players.player;
@@ -4977,6 +5050,16 @@ async function aiTakeTurn() {
 
   // Comfortably ahead at the start of its turn: sometimes just pass.
   if (aiShouldPassWhenAhead()) {
+    await delay(500);
+    passTurn('ai');
+    render();
+    playAiPassRing(() => endTurn('ai'));
+    return;
+  }
+
+  // Player passed and the round is out of reach even optimistically: concede it.
+  if (aiShouldConcedeRound()) {
+    logMsg('Opponent concedes the round to save its cards.');
     await delay(500);
     passTurn('ai');
     render();
@@ -5670,6 +5753,31 @@ function aiPlayBuffValue(c) {
   }
   return v;
 }
+// A hand card worth playing now because it refreshes a spent Order whose
+// second use is valuable: a refresh Play (Scout/Odrin/Foltest/Demavend) on
+// a damage Order with a kill available or a buff Order; any Order-bearing
+// card while a spent Temerian Drummer waits; a buff Play while a spent
+// Smith/Berserker/Figgis/Xavier can still be refreshed this turn.
+function aiBestRefreshPlay(hand) {
+  const ai = state.players.ai, t = state.turnCounter;
+  const enemy = state.players.player.board;
+  const worth = c => { const a = findOrderAbility(c); if (!a) return false;
+    if (a.isDamage) return enemy.some(e => e.power > 0 && e.power <= orderDamageAmount('ai', c, a));
+    return !a.isRefresh && !a.isDiscardPlay && !a.isScorch; };
+  const cands = [];
+  hand.forEach(c => {
+    if (c.special) return;
+    if (c.playRefreshOrder || c.playRefreshMulti) {
+      const n = scoutRefreshTargets('ai', c).filter(worth).length;
+      if (n > 0) cands.push({ c, v: 10 + n });
+    }
+    if (findOrderAbility(c) && ai.board.some(d => d.refreshOnOrderCardPlay && d.orderUsed && worth(d))) cands.push({ c, v: 5 });
+    if ((c.playBuffRepeat || c.playBuffMulti) && ai.board.some(d => d.refreshOnBuffed && d.orderUsed && d._ownerBuffedTurn !== t && worth(d))) cands.push({ c, v: 6 });
+  });
+  if (cands.length === 0) return null;
+  cands.sort((a, b) => b.v - a.v || b.c.power - a.c.power);
+  return cands[0].c;
+}
 function decideAiAction() {
   const ai = state.players.ai;
   const opp = state.players.player;
@@ -5685,6 +5793,8 @@ function decideAiAction() {
     const pc = ai.hand.find(c => c.uid === plan.playUid);
     const t = state.players.player.board.find(c => c.uid === plan.targetUid && c.power > 0);
     if (pc && t && aiPlayDamageFor(pc, ordersUsedThisTurn('ai')) >= t.power) return { action: 'play', uid: pc.uid };
+    // a refresh play in the plan: its refreshed Order finishes the target
+    if (pc && t && (pc.playRefreshOrder || pc.playRefreshMulti) && scoutRefreshTargets('ai', pc).length > 0) return { action: 'play', uid: pc.uid };
   }
 
   const myPower = totalPower('ai');
@@ -5714,6 +5824,12 @@ function decideAiAction() {
       .filter(x => x.o && x.o.enemy - x.o.own >= 4)
       .sort((a, b) => (b.o.enemy - b.o.own) - (a.o.enemy - a.o.own))[0];
     if (burn) return { action: 'play', uid: burn.c.uid };
+  }
+
+  // Plays that let an already-spent Order go again this turn.
+  if (!(opp.passed && diff > 0)) {
+    const rp = aiBestRefreshPlay(hand);
+    if (rp) return { action: 'play', uid: rp.uid };
   }
 
   // Siege Tower is worth 6 once 2+ Orders were used this turn, else 3.

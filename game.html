@@ -1716,26 +1716,38 @@
 </div>
 
 <div id="tutorialModal">
-  <div id="tutorialBox">
-    <button id="tutorialCloseBtn" aria-label="Close">&times;</button>
-    <h2>How to Play</h2>
-    <h3>Goal</h3>
-    <p>Win two of three rounds. Each round, whoever has the higher total power on the board when both players have passed wins that round.</p>
-    <h3>Turns</h3>
-    <ul>
-      <li>On your turn, play a card from your hand and/or activate a ready Order ability, then end your turn.</li>
-      <li>You may pass instead, locking in your current board for the rest of the round -- but once you've used an Order this turn, you must still play a card. If your hand is empty, you can only use Orders after having played your last card that same turn.</li>
-      <li>Once both players have passed, the round ends and scores are compared.</li>
-    </ul>
-    <h3>Cards</h3>
-    <ul>
-      <li>Bronze, Silver and Gold cards all add their power to your total once played.</li>
-      <li>Some cards have a Play ability (triggers immediately) or an Order ability (usable once, starting the turn after it's played).</li>
-      <li>Special cards (like Scorch) aren't placed on the board -- their effect resolves on their own, then they go to the discard pile.</li>
-    </ul>
-    <h3>Between Rounds</h3>
-    <p>Cards used stay in the discard pile -- they don't return to your hand or deck. Manage your cards carefully across all three rounds!</p>
-  </div>
+    <div id="tutorialBox">
+        <button id="tutorialCloseBtn" aria-label="Close">&times;</button>
+        <h2>How to Play</h2>
+        <h3>Goal</h3>
+        <p>Win 2 rounds to win the match!</p>
+        <h3>On your turn</h3>
+        <ul>
+            <li>Play 1 card from hand.</li>
+            <li>Activate Order abilities of cards played on a previous turn (optional).</li>
+            <li>When you end your turn, you draw a new card, up to a limit each round (indicated by a number on top of your deck)</li>
+            <li>Instead of playing, you may pass.</li>
+        </ul>
+        <h3>Passing</h3>
+        <ul>
+            <li>Pass only if you haven't played a card or activated an ability.</li>
+            <li>Once passed, you can't play any more cards or activate abilities for the rest of the round.</li>
+            <li>When you end your turn, you draw a new card, up to a limit each round</li>
+            <li>Once both players have passed, the round ends and scores are compared.</li>
+        </ul>
+        <h3>End of round</h3>
+        <ul>
+            <li>A round ends once both players have passed.</li>
+            <li>The player with more power wins the round.</li>
+            <li>Starting player wins ties.</li>
+            <li>All cards left in play are then discarded.</li>
+        </ul>
+        <h3>Starting a new Round</h3>
+        <ul>
+            <li>Refill back to 4 cards in hand.</li>
+            <li>The player who won the last round starts.</li>
+        </ul>
+    </div>
 </div>
 
 <div id="newGameModal">

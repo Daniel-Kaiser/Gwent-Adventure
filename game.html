@@ -5170,10 +5170,42 @@ function cardEl(card, opts = {}) {
 
 /* ---- Large hover preview (inspector), floating beside the hovered card ---- */
 const previewEl = document.getElementById('cardPreview');
+let previewAnchor = null;           // element the inspector is currently attached to
+let previewMouseX = -1, previewMouseY = -1;
+document.addEventListener('mousemove', (e) => { previewMouseX = e.clientX; previewMouseY = e.clientY; }, true);
 function attachPreview(el, card) {
+  el.__previewCard = card;
   el.addEventListener('mouseenter', () => showPreview(card, el));
-  el.addEventListener('mouseleave', hidePreview);
+  el.addEventListener('mouseleave', () => { if (previewAnchor === el) hidePreview(); });
 }
+// Watchdog: the inspector must never outlive its source. Every frame while it
+// is shown, check that the anchor is still in the DOM, still rendered, and
+// still the element under the pointer (an overlay/modal opening on top of it,
+// a re-render replacing it, a card being killed/played/discarded, a picker or
+// library closing, a round-end board clear... all fail one of these). If the
+// anchor was merely re-rendered and a fresh previewable card now sits under
+// the pointer, re-attach to that instead of hiding.
+function previewWatchdog() {
+  requestAnimationFrame(previewWatchdog);
+  if (!previewEl.classList.contains('show')) return;
+  const a = previewAnchor;
+  let ok = !!(a && a.isConnected && a.getClientRects().length > 0 &&
+              getComputedStyle(a).visibility !== 'hidden');
+  let hit = null;
+  if (previewMouseX >= 0) hit = document.elementFromPoint(previewMouseX, previewMouseY);
+  if (ok && hit && !a.contains(hit)) ok = false;
+  if (ok) return;
+  let fresh = hit;
+  while (fresh && !fresh.__previewCard) fresh = fresh.parentElement;
+  // Re-attach only when it's the SAME card re-rendered (same uid) -- a
+  // different card that merely ended up under a now-still pointer waits for
+  // a real mouse move (its own mouseenter) instead of popping up unasked.
+  const sameCard = fresh && a && fresh !== a && a.dataset && fresh.dataset &&
+                   a.dataset.uid && fresh.dataset.uid === a.dataset.uid;
+  if (sameCard && !drag) showPreview(fresh.__previewCard, fresh);
+  else hidePreview();
+}
+requestAnimationFrame(previewWatchdog);
 // Places the inspector beside `anchorEl`: to its right when it fits, else to
 // its left; vertically centered on the card and clamped to the viewport.
 // Computed once on mouseenter from the card's rect, so it doesn't follow
@@ -5197,6 +5229,7 @@ function positionPreview(anchorEl) {
 }
 function showPreview(card, anchorEl) {
   if (drag) return; // never pop the inspector over a card being dragged
+  previewAnchor = anchorEl || null;
   positionPreview(anchorEl);
   previewEl.className = 'show' + (card.tier ? ' ' + card.tier : '');
   previewEl.style.backgroundImage = card.img ? `url("${card.img}")` : 'none';
@@ -5210,6 +5243,7 @@ function showPreview(card, anchorEl) {
   }
 }
 function hidePreview() {
+  previewAnchor = null;
   previewEl.classList.remove('show');
 }
 

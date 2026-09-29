@@ -40,9 +40,7 @@
     --player: #6fc3e8;      /* player vs opponent distinction */
     --opponent: #d98cc0;
     --highlight2: #5ad1c9;
-    --popup-btn: #f1e3c2;   /* light popup buttons (confirm dialogs, New Game) */
-    --popup-btn-hover: #fff4dc;
-    --popup-btn-text: #2a1a0a;  /* tutorial secondary spotlight / targeting */
+    /* tutorial secondary spotlight / targeting */
   }
   * { box-sizing: border-box; }
   button, input { font-family: inherit; }
@@ -1633,7 +1631,8 @@
     cursor: pointer;
     font-size: 14px;
   }
-  #cancelTargetNo, #cancelTargetYes { background: var(--popup-btn); color: var(--popup-btn-text); }
+  #cancelTargetNo { background: var(--btn2); color: var(--text); border: 1px solid var(--border); }
+  #cancelTargetYes { background: var(--accent); color: var(--on-accent); }
 
   /* ---- Exit-to-main-menu confirmation dialog (same look as above) ---- */
   #mainMenuConfirmDialog {
@@ -1674,9 +1673,8 @@
     cursor: pointer;
     font-size: 14px;
   }
-  /* Popup buttons (confirm dialogs, New Game chooser): light cream, dark text. */
-  #mainMenuConfirmBox button { background: var(--popup-btn); color: var(--popup-btn-text); }
-  #mainMenuConfirmBox button:hover, #cancelTargetNo:hover, #cancelTargetYes:hover { background: var(--popup-btn-hover); }
+  #mainMenuConfirmNo, #newGameConfirmNo { background: var(--btn2); color: var(--text); border: 1px solid var(--border); }
+  #mainMenuConfirmYes, #newGameConfirmYes { background: var(--accent); color: var(--on-accent); }
 
   /* ---- Shared modal frame: gold hairline border on every dialog box ---- */
   #settingsBox, #overlayBox, #libraryBox, #tutorialBox, #newGameBox,
@@ -1699,12 +1697,15 @@
   }
   #newGameBox h2 { margin: 0 0 6px; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; text-align: center; }
   .newGameOption {
-    /* same convention as the confirm popups' buttons */
-    border: none; font-weight: 700; font-size: 14px; border-radius: 6px; cursor: pointer;
-    padding: 11px 18px; background: var(--popup-btn); color: var(--popup-btn-text);
+    font-family: 'GwentFont', serif; font-size: 17px; letter-spacing: 1.5px; font-weight: 700;
+    padding: 14px 18px; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: var(--on-accent); border: 2px solid var(--accent-hover);
+    transition: transform .15s ease, filter .15s ease;
   }
-  .newGameOption:hover:not(:disabled) { background: var(--popup-btn-hover); }
-  .newGameOption:disabled { opacity: .45; cursor: not-allowed; }
+  .newGameOption:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
+  .newGameOption:disabled {
+    background: #3a2f25; color: #8c7e6a; border-color: #54463a; cursor: not-allowed;
+  }
   .newGameOption .comingSoon { display: block; font-family: 'BrandonGrotesque', 'Segoe UI', sans-serif; font-size: 11px; letter-spacing: .5px; font-weight: 400; margin-top: 3px; }
 </style>
 </head>

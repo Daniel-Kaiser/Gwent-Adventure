@@ -4503,16 +4503,13 @@ function aiPlanComboKill() {
     const a = findOrderAbility(c);
     return a && a.isDamage;
   }).slice(0, 10);
-  if (sources.length === 0) return null;
   const playOptions = [null, ...ai.hand.filter(c => aiPlayDamageFor(c, 0) > 0 || c.playDamagePlusOrdersUsed || c.playDamageFromDeckTop)];
+  if (sources.length === 0 && playOptions.length === 1) return null;
   const trigValue = aiSecondOrderTriggerValue();
 
-  let best = null;
-  const nSubsets = 1 << sources.length;
-  for (let mask = 1; mask < nSubsets; mask++) {
-    const subset = sources.filter((_, i) => mask & (1 << i));
-    const k = subset.length;
-    const reachesSecond = prior + k >= 2 && prior < 2;
+  // Total damage a given set of Orders (+ optional Play card afterwards) deals.
+  const evalDamage = (subset, play) => {
+    const reachesSecond = prior + subset.length >= 2 && prior < 2;
     let orders = 0, dmg = 0, seltCount = 0;
     subset.forEach(c => {
       const a = findOrderAbility(c);
@@ -4525,16 +4522,34 @@ function aiPlanComboKill() {
       dmg += (prior + orders) >= 1 ? 4 : 2;
       orders++;
     }
-    const totalOrders = prior + orders;
+    const pd = play ? aiPlayDamageFor(play, prior + orders) : 0;
+    return { total: dmg + pd, pd, reachesSecond };
+  };
+
+  let best = null;
+  const nSubsets = 1 << sources.length;
+  for (let mask = 0; mask < nSubsets; mask++) {
+    const subset = sources.filter((_, i) => mask & (1 << i));
+    const k = subset.length;
     for (const play of playOptions) {
-      const pd = play ? aiPlayDamageFor(play, totalOrders) : 0;
+      if (!play && k === 0) continue;
+      const { total, pd, reachesSecond } = evalDamage(subset, play);
       if (play && pd <= 0) continue;
-      const total = dmg + pd;
       for (const t of enemies) {
         if (t.power > total) continue;
+        // Minimal plans only: if any single source can be dropped and the
+        // kill still happens, this plan wastes that source -- skip it (the
+        // smaller plan is enumerated separately).
+        let wasteful = false;
+        for (let i = 0; i < k && !wasteful; i++) {
+          if (evalDamage(subset.filter((_, j) => j !== i), play).total >= t.power) wasteful = true;
+        }
+        if (!wasteful && play && k > 0 && evalDamage(subset, null).total >= t.power) wasteful = true;
+        if (wasteful) continue;
         const value = t.power + (findOrderAbility(t) && !t.orderUsed ? 3 : 0);
-        const nSources = k + (play ? 1 : 0);
-        const score = value + (reachesSecond ? trigValue : 0) - 0.5 * nSources - 0.05 * (total - t.power);
+        // Orders are a real cost (they could be saved for another target or
+        // turn); the Play card is being played this turn anyway, so it's cheap.
+        const score = value + (reachesSecond ? trigValue : 0) - 1.5 * k - (play ? 0.25 : 0) - 0.05 * (total - t.power);
         if (!best || score > best.score) {
           best = { score, targetUid: t.uid, orderUids: subset.map(c => c.uid), playUid: play ? play.uid : null, total, targetPower: t.power };
         }
@@ -4542,6 +4557,18 @@ function aiPlanComboKill() {
     }
   }
   return best;
+}
+
+// The enemy card the AI's current plan (Play-damage) is already going to
+// kill -- Orders must not be stacked on it.
+function aiDoomedTargetUid() {
+  const plan = state && state.aiComboPlan;
+  if (!plan || !plan.playUid) return null;
+  const ai = state.players.ai;
+  const pc = ai.hand.find(c => c.uid === plan.playUid);
+  const t = state.players.player.board.find(c => c.uid === plan.targetUid && c.power > 0);
+  if (!pc || !t) return null;
+  return aiPlayDamageFor(pc, ordersUsedThisTurn('ai')) >= t.power ? t.uid : null;
 }
 
 // Which ready Order the AI fires next: Battering Ram / Foltest's Pride
@@ -4685,7 +4712,9 @@ async function aiUseAvailableOrders(opts) {
       // hit on the most valuable enemy card (unused Orders first) is fine.
       const enemyBoard = state.players.player.board;
       // (skip cards already at 0 -- killed a moment ago, still mid death animation)
-      const alive = enemyBoard.filter(c => c.power > 0);
+      // ... and never at a card the planned Play-damage will kill anyway
+      const doomed = aiDoomedTargetUid();
+      const alive = enemyBoard.filter(c => c.power > 0 && c.uid !== doomed);
       const killable = alive.filter(c => c.power <= orderDamageAmount('ai', readyCard, ability));
       if (killable.length > 0) {
         target = pickDamageTarget(killable, (a, b) => a.power > b.power);

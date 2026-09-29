@@ -2038,8 +2038,12 @@ const CARD_DB = {
   // Order: discard the highest card(s) in play (both boards, itself if tied).
   pyrotechnician:    { id: 'pyrotechnician', name: 'Pyrotechnician', power: 1, tier: 'bronze', faction: 'mahakam', img: 'cards/pyrotechnician.jpg',
                        abilities: [ { trigger: 'order', needsTarget: false, isScorch: true, effect: (ctx) => resolveHighestDiscardOrder(ctx.side, ctx.card) } ] },
-  // Play: up to 3 other distinct cards in play get +1 (Troubadour-style multi pick).
-  rowdy_dwarf:       { id: 'rowdy_dwarf', name: 'Rowdy Dwarf', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/rowdy_dwarf.jpg', abilities: [], playBuffMulti: 3 },
+  // Play: you may deal 1 damage. Order: up to 3 OTHER distinct cards in play
+  // get +1 each (multi-pick, finish early like Demavend/Troubadour).
+  rowdy_dwarf:       { id: 'rowdy_dwarf', name: 'Rowdy Dwarf', power: 2, tier: 'bronze', faction: 'mahakam', img: 'cards/rowdy_dwarf.jpg', playTargetDamage: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, multiBuff: 3,
+                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial),
+                                      effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
   // Order: deal 1. Its Order refreshes whenever it gets buffed.
   dwarf_berserker:   { id: 'dwarf_berserker', name: 'Dwarf Berserker', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarf_berserker.jpg', refreshOnBuffed: true,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
@@ -2067,7 +2071,7 @@ const CARD_DB = {
   // (both boards, himself included if tied); otherwise a targeted 3 damage.
   // See dethmoldDiscardActive()/resolveDethmoldDiscard().
   dethmold:          { id: 'dethmold', name: 'Dethmold', power: 3, tier: 'silver', faction: 'northern_realms', img: 'cards/dethmold.jpg',
-                       abilities: [], playTargetDamage: 3, playDiscardHighestIfOrders: 2 },
+                       abilities: [], playTargetDamage: 2, playDiscardHighestIfOrders: 2 },
   foltests_pride:    { id: 'foltests_pride', name: "Foltest's Pride", power: 3, tier: 'silver', faction: 'northern_realms', img: 'cards/foltests_pride.jpg',
                        refreshOnSecondOrder: true,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
@@ -2115,7 +2119,7 @@ const CARD_DB = {
                                       validTargets: (side, card) => scoutRefreshTargets(side, card),
                                       effect: (ctx, target) => refreshOrder(target) } ] },
   // Play AND Order: refresh one used Order (Odrin rules). Passive: +2 on the 2nd Order.
-  king_foltest:      { id: 'king_foltest', name: 'King Foltest', power: 2, tier: 'gold', faction: 'northern_realms', img: 'cards/king_foltest.jpg',
+  king_foltest:      { id: 'king_foltest', name: 'King Foltest', power: 1, tier: 'gold', faction: 'northern_realms', img: 'cards/king_foltest.jpg',
                        refreshAllowsScouts: true, buffOnSecondOrder: 2, playRefreshOrder: true,
                        abilities: [ { trigger: 'order', needsTarget: true, isRefresh: true,
                                       validTargets: (side, card) => scoutRefreshTargets(side, card),
@@ -4483,7 +4487,7 @@ function aiPlayDamageFor(card, ordersUsed) {
    - Seltkirk used last among the Orders: 4 if any Order precedes it, else 2
    - Battering Ram / Foltest's Pride (refreshOnSecondOrder): if the subset
      reaches the 2nd Order, each one in it gets one extra use
-   - Blue Stripes Commando: 1 + Orders used before it; Dethmold: 3 only while
+   - Blue Stripes Commando: 1 + Orders used before it; Dethmold: 2 only while
      fewer than 2 Orders are used (else its discard branch applies); Maxii:
      the power of the AI's own top deck card.
    Score = target power (+3 if it still has an unused Order) + the value of
@@ -4649,6 +4653,14 @@ async function aiUseAvailableOrders(opts) {
       const useful = picks.some(t => { const ta = findOrderAbility(t); return !ta.isDamage || state.players.player.board.some(e => e.power > 0 && e.power <= orderDamageAmount('ai', t, ta)); });
       if (picks.length === 0 || (!useful && !aiWantsSecondOrder(readyAll.length))) { heldBack.add(readyCard.uid); continue; }
       await new Promise(resolve => applyMultiTargetEffect({ side: 'ai', card: readyCard, kind: 'orderMulti', onDone: resolve }, picks.map(c => c.uid)));
+      await delay(500);
+      continue;
+    }
+    if (ability.multiBuff) {
+      // Rowdy Dwarf's Order: boost up to 3 own cards, reaction triggers first.
+      const picks = aiPickMultiBuffTargets(readyCard, ability.multiBuff);
+      if (picks.length === 0) { heldBack.add(readyCard.uid); continue; }
+      await new Promise(resolve => applyMultiTargetEffect({ side: 'ai', card: readyCard, kind: 'orderMulti', ability, onDone: resolve }, picks.map(c => c.uid)));
       await delay(500);
       continue;
     }
@@ -6393,6 +6405,20 @@ function applyMultiTargetEffect(session, targetUids) {
       render();
       if (onDone) onDone();
     };
+    if (session.ability && session.ability.multiBuff) {
+      // Rowdy Dwarf's Order: +1 to each pick, one projectile at a time;
+      // buff reactions wait for the whole batch.
+      const targets = targetUids.map(findCardByUid).filter(Boolean);
+      beginBuffBatch();
+      let i = 0;
+      const next = () => {
+        if (i >= targets.length) { endBuffBatch(); orderDone(); if (side === 'player') maybeAutoEndTurn('player'); return; }
+        const t = targets[i++];
+        shootProjectile(card.uid, t.uid, () => { applyPowerDelta(t, 1, { side, card }); render(); next(); }, 'buff');
+      };
+      next();
+      return;
+    }
     applyMultiRefresh(side, card, targetUids.map(findCardByUid).filter(Boolean), orderDone);
     return;
   }
@@ -6432,9 +6458,9 @@ function activateOrderAbility(side, card) {
   if (!ability) return;
   if (ability.isDiscardPlay) {
     activateDiscardPlayOrder(side, card, ability);
-  } else if (ability.multiRefresh) {
+  } else if (ability.multiRefresh || ability.multiBuff) {
     const valid = new Set(ability.validTargets(side, card).map(c => c.uid));
-    startTargeting({ side, card, kind: 'orderMulti', ability, max: ability.multiRefresh, selected: [],
+    startTargeting({ side, card, kind: 'orderMulti', ability, max: ability.multiRefresh || ability.multiBuff, selected: [],
                      excludeSelf: true, filter: c => valid.has(c.uid) });
   } else if (ability.needsTarget) {
     const session = { side, card, kind: 'order', ability, excludeSelf: !!ability.excludeSelf };

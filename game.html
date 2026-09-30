@@ -2113,6 +2113,11 @@ const CARD_DB = {
   // Play (may): deal 1 damage, twice (two sequential picks). Order: deal 1 damage.
   brokvar_archer:    { id: 'brokvar_archer', name: 'Brokvar Archer', power: 1, tier: 'bronze', faction: 'skellige', img: 'cards/brokvar_archer.jpg', playDamageSeq: 2, playDamageSeqAmount: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Play (mandatory target) AND Order: deal 1 damage.
+  dimun_pirate:      { id: 'dimun_pirate', name: 'Dimun Pirate', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/dimun_pirate.jpg', playTargetDamage: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Passive: after an opponent plays their first card each turn, deal 1 damage to it if it has 2 or less power (see resolveLongships).
+  an_craite_longship: { id: 'an_craite_longship', name: 'An Craite Longship', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_longship.jpg', longshipMaxPower: 2, abilities: [] },
   /* ---- Dwarves (faction: 'mahakam') -- bronze batch. Buff reactions
      (Defender / Smith / Berserker / Chariot) hang off onCardBuffed(). ---- */
   // Play (may) AND Order: deal 2 damage.
@@ -3394,7 +3399,7 @@ let buffReactionTally = { turn: -1, n: 0 };
 // projectile is in flight), so this keeps other Orders/actions from
 // starting a second, overlapping session.
 let seqBuffActive = 0;
-function buffReactionsBusy() { return buffReactionProcessing || buffReactionQueue.length > 0 || seqBuffActive > 0 || paulieReturnPending > 0; }
+function buffReactionsBusy() { return buffReactionProcessing || buffReactionQueue.length > 0 || seqBuffActive > 0 || paulieReturnPending > 0 || longshipPending > 0; }
 function beginBuffBatch() { buffBatchDepth++; }
 function endBuffBatch() { buffBatchDepth = Math.max(0, buffBatchDepth - 1); scheduleBuffReactions(); }
 function buffReactionsIdle() {
@@ -4597,6 +4602,7 @@ function flyExistingElement(el, toRect, durationMs, onDone) {
    fully resolved, which is exactly when a passive like Roach's needs to
    check in. */
 function notifyAllyPlay(side, playedCard, isFirstPlayThisTurn) {
+  if (isFirstPlayThisTurn) resolveLongships(side, playedCard);
   state.players[side].board.forEach(boardCard => {
     if (boardCard.uid === playedCard.uid || !boardCard.abilities) return;
     boardCard.abilities
@@ -4605,6 +4611,50 @@ function notifyAllyPlay(side, playedCard, isFirstPlayThisTurn) {
   });
   refreshOnOrderCardEntered(side, playedCard);
   triggerDiscardReturnPassives(side, playedCard);
+}
+
+/* An Craite Longship: after a side plays its FIRST card of a turn (any card
+   entering play that counts as the turn's first play: hand plays and free
+   plays alike, never tokens), each Longship on the OTHER side deals 1 damage to
+   it if it has 2 or less power at that moment (after its own Play resolved).
+   The damage is dealt by the Longship's owner (Bloodthirst, Shieldmaiden
+   count, Skald refresh). Longships resolve one after another; the turn is held
+   open (longshipPending) until they've landed, so the damage can't miss the
+   end-of-turn heal. */
+let longshipPending = 0;
+function resolveLongships(side, playedCard) {
+  if (!state || state.phase !== 'playing' || !playedCard || playedCard.special) return;
+  const owner = otherSide(side);
+  const ships = state.players[owner].board.filter(c => c.longshipMaxPower !== undefined);
+  if (ships.length === 0) return;
+  longshipPending++;
+  pendingPlayTokenSpawns++;
+  const queue = ships.slice();
+  const done = () => {
+    longshipPending = Math.max(0, longshipPending - 1);
+    pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
+    if (state) {
+      render();
+      if (state.phase === 'playing' && state.activeTurn === 'player') maybeAutoEndTurn('player');
+    }
+  };
+  const next = () => {
+    if (!state || state.phase !== 'playing') { done(); return; }
+    const ship = queue.shift();
+    if (!ship) { done(); return; }
+    const target = findCardByUid(playedCard.uid);
+    if (!target || target.power <= 0 || target.power > ship.longshipMaxPower ||
+        findCardOwnerSide(ship.uid) !== owner || findCardOwnerSide(target.uid) !== side) { next(); return; }
+    const el = document.querySelector(`.card[data-uid="${ship.uid}"]`);
+    if (el) showFloatingMessage('Ambush!', el);
+    setTimeout(() => shootProjectile(ship.uid, target.uid, () => {
+      applyDamage(target, 1, { side: owner, card: ship });
+      logMsg(`${owner === 'player' ? 'Your' : "Opponent's"} ${ship.name} deals 1 damage to ${target.name}.`);
+      render();
+      setTimeout(next, 150);
+    }), 250);
+  };
+  setTimeout(next, 200);
 }
 
 /* "Passive: whenever you play a Gold card, this card gets played from your
@@ -6267,7 +6317,19 @@ function aiBestRefreshPlay(hand) {
   cands.sort((a, b) => b.v - a.v || b.c.power - a.c.power);
   return cands[0].c;
 }
+// Player's Longships punish a first play of 2 or less power: when the AI hasn't
+// played yet this turn, lead with the weakest acceptable 3+ power card instead.
 function decideAiAction() {
+  const d = decideAiActionBase();
+  const ai = state.players.ai;
+  if (d.action !== 'play' || state.aiComboPlan || ai.firstPlayDone) return d;
+  if (!state.players.player.board.some(c => c.longshipMaxPower !== undefined)) return d;
+  const cur = ai.hand.find(c => c.uid === d.uid);
+  if (!cur || cur.special || cur.power > 2) return d;
+  const alt = ai.hand.filter(c => !c.special && c.power >= 3 && aiScorchAcceptable(c)).sort((a, b) => a.power - b.power)[0];
+  return alt ? { action: 'play', uid: alt.uid } : d;
+}
+function decideAiActionBase() {
   const ai = state.players.ai;
   const opp = state.players.player;
 

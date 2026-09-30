@@ -6642,7 +6642,8 @@ function cardEl(card, opts = {}) {
   div.title = card.special ? `${card.name} — special (${card.tier})` : `${card.name} — ${card.power} power (${card.tier})`;
   div.dataset.uid = card.uid;
   if (holgerIsPending(card)) { div.classList.add('holgerPending'); div.title = `${card.name} - waiting for the opponent's next card (4 damage)`; }
-  if (hasTempBloodthirst(card)) div.classList.add('bloodthirstNow'); // Tuirseach Veteran's Order, this turn only
+  // red glow on every card in play with Bloodthirst (Veteran's temporary one only for the turn it used its Order)
+  if (state && bloodthirstOf(card) > 0 && findCardOwnerSide(card.uid)) div.classList.add('bloodthirstNow');
   div.innerHTML = `
     <div class="power${powerStateClass(card)}">${card.power}</div>
     <div class="name">${card.name}</div>

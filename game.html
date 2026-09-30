@@ -405,7 +405,7 @@
     border-radius: 6px;
     white-space: nowrap;
     pointer-events: none;
-    z-index: 600;
+    z-index: 2750;
     animation: floatMsgUp 1.4s ease-out forwards;
   }
   @keyframes floatMsgUp {
@@ -1637,6 +1637,42 @@
   #libraryGrid .card { flex: 0 0 auto; cursor: default; }
   #libraryGrid .empty-msg { opacity: .6; padding: 20px; }
 
+  /* ---- Deck builder (main menu "Build a deck"): the library modal covers only
+     the left half, #deckScreen is the right half ---- */
+  #libraryModal.deckBuild { right: auto; width: 50%; }
+  #deckMenuBtn { display: none; background: #ffffff14; color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px 16px; font-size: 13px; font-weight: 700; cursor: pointer; }
+  #deckMenuBtn:hover { background: #ffffff22; }
+  #libraryModal.deckBuild #deckMenuBtn { display: block; }
+  #libraryModal.deckBuild #libraryCloseBtn { display: none; }
+  #libraryModal.deckBuild.dropRemove #libraryBox { outline: 3px dashed var(--bad); outline-offset: -6px; }
+  #libraryModal.deckBuild #libraryGrid .card { cursor: grab; touch-action: none; user-select: none; }
+  #libraryGrid .card.deckFull { filter: grayscale(1) brightness(.55); cursor: not-allowed !important; }
+  .deckBadge { position: absolute; right: 4px; bottom: 3px; z-index: 3; font: 700 11px Arial, sans-serif; background: #000c; color: var(--text); padding: 1px 6px; border-radius: 6px; pointer-events: none; }
+  #deckScreen { display: none; position: fixed; top: 20px; bottom: 20px; left: 50%; right: 20px; z-index: 2100; background: var(--panel); border-radius: 14px; box-shadow: 0 16px 40px #000c; padding: 20px 24px; flex-direction: column; min-height: 0; }
+  #deckScreen.show { display: flex; }
+  #deckHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  #deckHeader h2 { margin: 0; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; }
+  #deckSaveBtn { background: var(--accent); color: var(--on-accent); border: none; border-radius: 6px; padding: 9px 22px; font-weight: 700; font-size: 13px; cursor: pointer; }
+  #deckSaveBtn:hover { filter: brightness(1.1); }
+  #deckBody { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; }
+  .deckHeading { margin: 6px 0 8px; font-family: 'GwentFont', serif; font-size: 13px; letter-spacing: 2px; color: var(--muted); text-transform: uppercase; }
+  .deckRow { display: flex; gap: 12px; justify-content: center; margin-bottom: 12px; }
+  .deckDivider { width: 160px; height: 1px; background: var(--border); margin: 6px 0 10px; flex: 0 0 auto; }
+  .deckSlot { position: relative; box-sizing: border-box; width: 92px; height: 130px; border-radius: 8px; border: 2px dashed var(--border); background: #00000038; flex: 0 0 auto; }
+  .deckSlot[data-tier="gold"] { border-color: var(--gold); }
+  .deckSlot[data-tier="silver"] { border-color: var(--silver); }
+  .deckSlot[data-tier="bronze"] { border-color: var(--bronze); }
+  .deckSlot.filled { border-style: solid; border-color: transparent; background: none; }
+  .deckSlot.slotOver { box-shadow: 0 0 14px 3px var(--accent); background: #e0bc5c22; }
+  .deckSlot > .card { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; user-select: none; }
+  .deckSlot.dragSrc > .card { opacity: .35; }
+  .deckSlot .deckRemove { position: absolute; top: 3px; right: 3px; z-index: 4; width: 20px; height: 20px; border-radius: 50%; border: none; background: #000c; color: var(--text); font: 700 14px/20px Arial, sans-serif; padding: 0; cursor: pointer; display: none; }
+  .deckSlot.filled:hover .deckRemove { display: block; }
+  .deckSlot .deckRemove:hover { background: var(--bad); }
+  .deckSlot.shake { animation: deckShake .35s; }
+  @keyframes deckShake { 0%,100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
+  .deckGhost { position: fixed; z-index: 2800; pointer-events: none; transform: translate(-50%, -50%) rotate(-3deg) scale(1.06); opacity: .93; box-shadow: 0 12px 28px #000c; }
+
   /* ---- Click-to-start gate (guarantees a user gesture before any audio
      is attempted, so the browser never blocks the main-menu music) ---- */
   #clickToStartOverlay {
@@ -1777,6 +1813,7 @@
     <button id="titleNewGameBtn">New Game</button>
     <button id="titleTutorialBtn" class="titleSecondaryBtn">Tutorial</button>
     <button id="titleLibraryBtn" class="titleSecondaryBtn">Card Library</button>
+    <button id="titleDeckBtn" class="titleSecondaryBtn">Build a deck (unfinished)</button>
     <button id="titleSettingsBtn" class="titleSecondaryBtn">Settings</button>
   </div>
 </div>
@@ -1862,6 +1899,7 @@
         </div>
       </div>
       <h2>Card Library</h2>
+      <button type="button" id="deckMenuBtn">Main Menu</button>
     </div>
     <div id="libraryGrid"></div>
     <div id="libraryFooter">
@@ -1869,6 +1907,11 @@
       <button type="button" id="devPickCancelBtn">Cancel</button>
     </div>
   </div>
+</div>
+
+<div id="deckScreen">
+  <div id="deckHeader"><h2>Your Deck</h2><button type="button" id="deckSaveBtn" title="Coming soon">Save deck</button></div>
+  <div id="deckBody"></div>
 </div>
 
 <div id="clickToStartOverlay">
@@ -2654,6 +2697,11 @@ const CARD_VOICE_LINES = {
   ],
   roach: [
     { url: 'sfx/roach_snort.mp3', text: '[...]' },
+  ],
+  morkvarg: [
+    { url: 'sfx/morkvarg_line_1.mp3', text: 'What will you dooo? Hrrr...' },
+    { url: 'sfx/morkvarg_line_2.mp3', text: 'Hrrr, a bite? Just one morrrrsel, hrrrr...' },
+    { url: 'sfx/morkvarg_line_3.mp3', text: 'Hrrrr, you cannot hide your stench!' },
   ],
 };
 // Saesenthessis ("Saskia") is the same dragon as Villentretenmerth -- same lines.
@@ -8622,6 +8670,7 @@ const ALL_DEV_CARDS = Object.values(CARD_DB).filter(c => !c.tutorialOnly).sort((
 function renderLibraryGrid() {
   libraryGrid.innerHTML = '';
   const cards = (devPickMode ? ALL_DEV_CARDS : ALL_LIBRARY_CARDS).filter(c => libraryTierFilters[c.tier]);
+  const deckMode = libraryModal.classList.contains('deckBuild');
   if (cards.length === 0) {
     const msg = document.createElement('div');
     msg.className = 'empty-msg';
@@ -8641,11 +8690,20 @@ function renderLibraryGrid() {
         document.getElementById('devPickAddBtn').disabled = !devPickSelected;
       });
     }
+    if (deckMode) {
+      el.dataset.cardId = card.id;
+      el.addEventListener('pointerdown', (e) => startDeckDrag(e, el, card, null));
+    }
     libraryGrid.appendChild(el);
   });
+  if (deckMode) updateLibraryDeckBadges();
 }
 
 function closeLibraryModal() {
+  if (libraryModal.classList.contains('deckBuild')) {
+    libraryModal.classList.remove('deckBuild', 'dropRemove');
+    document.getElementById('deckScreen').classList.remove('show');
+  }
   devPickMode = null;
   devPickSelected = null;
   libraryModal.classList.remove('devPick');
@@ -8680,8 +8738,138 @@ function toggleAutoEndTurn() {
 document.getElementById('settingsAutoEndTurnToggle').addEventListener('click', toggleAutoEndTurn);
 updateAutoEndTurnButtons();
 document.getElementById('libraryCloseBtn').addEventListener('click', closeLibraryModal);
-libraryModal.addEventListener('click', (e) => { if (e.target === libraryModal) closeLibraryModal(); });
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && libraryModal.classList.contains('show') && devPickMode) closeLibraryModal(); });
+libraryModal.addEventListener('click', (e) => { if (e.target === libraryModal && !libraryModal.classList.contains('deckBuild')) closeLibraryModal(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && libraryModal.classList.contains('show') && (devPickMode || libraryModal.classList.contains('deckBuild'))) closeLibraryModal(); });
+
+/* =========================================================
+   DECK BUILDER (unfinished): main-menu screen. The card library covers the
+   left half, the deck (3 gold / 5 silver / 8 bronze slots) the right half.
+   Cards are dragged (pointer events, ghost) from the library into a slot of
+   their own rarity; the library keeps the card, showing an (n/max) badge
+   and greying it out when full (1 copy, bronze 2). In memory only.
+========================================================= */
+const DECK_LAYOUT = { gold: 3, silver: 5, bronze: 8 };
+const deckSlots = { gold: Array(3).fill(null), silver: Array(5).fill(null), bronze: Array(8).fill(null) };
+const deckBody = document.getElementById('deckBody');
+const deckMax = (tier) => tier === 'bronze' ? 2 : 1;
+function deckCount(id) {
+  let n = 0;
+  for (const t in deckSlots) deckSlots[t].forEach(x => { if (x === id) n++; });
+  return n;
+}
+function updateLibraryDeckBadges() {
+  libraryGrid.querySelectorAll('.card').forEach(el => {
+    const card = CARD_DB[el.dataset.cardId];
+    if (!card) return;
+    const n = deckCount(card.id), max = deckMax(card.tier);
+    el.classList.toggle('deckFull', n >= max);
+    let b = el.querySelector('.deckBadge');
+    if (n > 0) {
+      if (!b) { b = document.createElement('div'); b.className = 'deckBadge'; el.appendChild(b); }
+      b.textContent = `(${n}/${max})`;
+    } else if (b) b.remove();
+  });
+}
+function buildDeckScreen() {
+  deckBody.innerHTML = '';
+  const addSection = (tier, title, rows, last) => {
+    const h = document.createElement('div'); h.className = 'deckHeading'; h.textContent = title; deckBody.appendChild(h);
+    const per = DECK_LAYOUT[tier] / rows;
+    for (let r = 0; r < rows; r++) {
+      const row = document.createElement('div'); row.className = 'deckRow';
+      for (let i = r * per; i < (r + 1) * per; i++) {
+        const slot = document.createElement('div');
+        slot.className = 'deckSlot'; slot.dataset.tier = tier; slot.dataset.idx = i;
+        row.appendChild(slot);
+      }
+      deckBody.appendChild(row);
+    }
+    if (!last) { const d = document.createElement('div'); d.className = 'deckDivider'; deckBody.appendChild(d); }
+  };
+  addSection('gold', 'Golds', 1); addSection('silver', 'Silvers', 1); addSection('bronze', 'Bronzes', 2, true);
+  renderDeckSlots();
+}
+function renderDeckSlots() {
+  deckBody.querySelectorAll('.deckSlot').forEach(slot => {
+    const tier = slot.dataset.tier, idx = +slot.dataset.idx, id = deckSlots[tier][idx];
+    slot.innerHTML = ''; slot.classList.toggle('filled', !!id); slot.classList.remove('dragSrc');
+    if (!id) return;
+    const card = CARD_DB[id];
+    const el = cardEl(card, { disabled: true });
+    attachPreview(el, card);
+    el.addEventListener('pointerdown', (e) => startDeckDrag(e, el, card, { tier, idx }));
+    slot.appendChild(el);
+    const x = document.createElement('button');
+    x.className = 'deckRemove'; x.type = 'button'; x.title = 'Remove from deck'; x.textContent = '\u00d7';
+    x.addEventListener('pointerdown', (e) => e.stopPropagation());
+    x.addEventListener('click', (e) => { e.stopPropagation(); deckSlots[tier][idx] = null; hidePreview(); renderDeckSlots(); updateLibraryDeckBadges(); });
+    slot.appendChild(x);
+  });
+}
+let deckDrag = null;
+function startDeckDrag(e, el, card, from) {
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+  if (!from && el.classList.contains('deckFull')) return;
+  e.preventDefault();
+  deckDrag = { el, card, from, sx: e.clientX, sy: e.clientY, ghost: null };
+}
+function deckSlotAt(x, y) {
+  const hit = document.elementFromPoint(x, y);
+  return hit ? hit.closest('.deckSlot') : null;
+}
+window.addEventListener('pointermove', (e) => {
+  const d = deckDrag; if (!d) return;
+  if (!d.ghost) {
+    if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 6) return;
+    d.ghost = d.el.cloneNode(true);
+    d.ghost.classList.add('deckGhost'); d.ghost.classList.remove('deckFull');
+    d.ghost.querySelectorAll('.deckRemove').forEach(n => n.remove());
+    d.ghost.style.position = 'fixed'; d.ghost.style.inset = 'auto'; d.ghost.style.width = '92px'; d.ghost.style.height = '130px';
+    document.body.appendChild(d.ghost);
+    hidePreview();
+    if (d.from) d.el.parentElement.classList.add('dragSrc');
+  }
+  d.ghost.style.left = e.clientX + 'px'; d.ghost.style.top = e.clientY + 'px';
+  const slot = deckSlotAt(e.clientX, e.clientY);
+  deckBody.querySelectorAll('.deckSlot.slotOver').forEach(s => s.classList.remove('slotOver'));
+  if (slot && slot.dataset.tier === d.card.tier) slot.classList.add('slotOver');
+  libraryModal.classList.toggle('dropRemove', !!d.from && !slot && e.clientX < window.innerWidth / 2);
+});
+function endDeckDrag(e, cancel) {
+  const d = deckDrag; if (!d) return;
+  deckDrag = null;
+  deckBody.querySelectorAll('.deckSlot.slotOver').forEach(s => s.classList.remove('slotOver'));
+  libraryModal.classList.remove('dropRemove');
+  if (!d.ghost) return; // a plain click, no drag
+  d.ghost.remove();
+  if (cancel) { renderDeckSlots(); return; }
+  const slot = deckSlotAt(e.clientX, e.clientY);
+  if (slot) {
+    const tier = slot.dataset.tier, idx = +slot.dataset.idx;
+    if (tier !== d.card.tier) {
+      slot.classList.remove('shake'); void slot.offsetWidth; slot.classList.add('shake');
+    } else if (d.from) {
+      const a = deckSlots[tier], t = a[idx];
+      a[idx] = d.card.id; a[d.from.idx] = t; // move into empty slot, or swap
+    } else {
+      deckSlots[tier][idx] = d.card.id; // replaces any card already there
+    }
+  } else if (d.from && e.clientX < window.innerWidth / 2) {
+    deckSlots[d.from.tier][d.from.idx] = null; // dragged back out to the library
+  }
+  renderDeckSlots(); updateLibraryDeckBadges();
+}
+window.addEventListener('pointerup', (e) => endDeckDrag(e, false));
+window.addEventListener('pointercancel', (e) => endDeckDrag(e, true));
+document.getElementById('titleDeckBtn').addEventListener('click', () => {
+  libraryModal.classList.add('deckBuild');
+  buildDeckScreen();
+  renderLibraryGrid();
+  libraryModal.classList.add('show');
+  document.getElementById('deckScreen').classList.add('show');
+});
+document.getElementById('deckMenuBtn').addEventListener('click', closeLibraryModal);
+document.getElementById('deckSaveBtn').addEventListener('click', (e) => showFloatingMessage('Coming soon', e.currentTarget));
 
 /* =========================================================
    DEVELOPER OPTIONS (Developer mode on, in-game, not in the tutorial): a

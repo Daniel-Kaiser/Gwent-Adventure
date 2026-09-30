@@ -1640,10 +1640,6 @@
   /* ---- Deck builder (main menu "Build a deck"): the library modal covers only
      the left half, #deckScreen is the right half ---- */
   #libraryModal.deckBuild { right: auto; width: 50%; }
-  #deckMenuBtn { display: none; background: #ffffff14; color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px 16px; font-size: 13px; font-weight: 700; cursor: pointer; }
-  #deckMenuBtn:hover { background: #ffffff22; }
-  #libraryModal.deckBuild #deckMenuBtn { display: block; }
-  #libraryModal.deckBuild #libraryCloseBtn { display: none; }
   #libraryModal.deckBuild.dropRemove #libraryBox { outline: 3px dashed var(--bad); outline-offset: -6px; }
   #libraryModal.deckBuild #libraryGrid .card { cursor: grab; touch-action: none; user-select: none; }
   #libraryGrid .card.deckFull { filter: grayscale(1) brightness(.55); cursor: not-allowed !important; }
@@ -1899,7 +1895,6 @@
         </div>
       </div>
       <h2>Card Library</h2>
-      <button type="button" id="deckMenuBtn">Main Menu</button>
     </div>
     <div id="libraryGrid"></div>
     <div id="libraryFooter">
@@ -8751,7 +8746,10 @@ window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && libraryMod
 const DECK_LAYOUT = { gold: 3, silver: 5, bronze: 8 };
 const deckSlots = { gold: Array(3).fill(null), silver: Array(5).fill(null), bronze: Array(8).fill(null) };
 const deckBody = document.getElementById('deckBody');
+const TIER_RANK = { bronze: 0, silver: 1, gold: 2 };
+const cardFitsSlot = (card, slotTier) => TIER_RANK[card.tier] <= TIER_RANK[slotTier];
 const deckMax = (tier) => tier === 'bronze' ? 2 : 1;
+function deckMaxFor(id) { return deckMax(CARD_DB[id].tier); }
 function deckCount(id) {
   let n = 0;
   for (const t in deckSlots) deckSlots[t].forEach(x => { if (x === id) n++; });
@@ -8827,12 +8825,13 @@ window.addEventListener('pointermove', (e) => {
     d.ghost.style.position = 'fixed'; d.ghost.style.inset = 'auto'; d.ghost.style.width = '92px'; d.ghost.style.height = '130px';
     document.body.appendChild(d.ghost);
     hidePreview();
+    SFX.pickup();
     if (d.from) d.el.parentElement.classList.add('dragSrc');
   }
   d.ghost.style.left = e.clientX + 'px'; d.ghost.style.top = e.clientY + 'px';
   const slot = deckSlotAt(e.clientX, e.clientY);
   deckBody.querySelectorAll('.deckSlot.slotOver').forEach(s => s.classList.remove('slotOver'));
-  if (slot && slot.dataset.tier === d.card.tier) slot.classList.add('slotOver');
+  if (slot && cardFitsSlot(d.card, slot.dataset.tier)) slot.classList.add('slotOver');
   libraryModal.classList.toggle('dropRemove', !!d.from && !slot && e.clientX < window.innerWidth / 2);
 });
 function endDeckDrag(e, cancel) {
@@ -8844,19 +8843,21 @@ function endDeckDrag(e, cancel) {
   d.ghost.remove();
   if (cancel) { renderDeckSlots(); return; }
   const slot = deckSlotAt(e.clientX, e.clientY);
+  let ok = false;
   if (slot) {
     const tier = slot.dataset.tier, idx = +slot.dataset.idx;
-    if (tier !== d.card.tier) {
+    const t = deckSlots[tier][idx];
+    if (!cardFitsSlot(d.card, tier) || (d.from && t && !cardFitsSlot(CARD_DB[t], d.from.tier))) {
       slot.classList.remove('shake'); void slot.offsetWidth; slot.classList.add('shake');
     } else if (d.from) {
-      const a = deckSlots[tier], t = a[idx];
-      a[idx] = d.card.id; a[d.from.idx] = t; // move into empty slot, or swap
+      deckSlots[tier][idx] = d.card.id; deckSlots[d.from.tier][d.from.idx] = t; ok = true;
     } else {
-      deckSlots[tier][idx] = d.card.id; // replaces any card already there
+      deckSlots[tier][idx] = d.card.id; ok = true;
     }
   } else if (d.from && e.clientX < window.innerWidth / 2) {
-    deckSlots[d.from.tier][d.from.idx] = null; // dragged back out to the library
+    deckSlots[d.from.tier][d.from.idx] = null; ok = true;
   }
+  if (ok) SFX.place();
   renderDeckSlots(); updateLibraryDeckBadges();
 }
 window.addEventListener('pointerup', (e) => endDeckDrag(e, false));
@@ -8868,7 +8869,6 @@ document.getElementById('titleDeckBtn').addEventListener('click', () => {
   libraryModal.classList.add('show');
   document.getElementById('deckScreen').classList.add('show');
 });
-document.getElementById('deckMenuBtn').addEventListener('click', closeLibraryModal);
 document.getElementById('deckSaveBtn').addEventListener('click', (e) => showFloatingMessage('Coming soon', e.currentTarget));
 
 /* =========================================================

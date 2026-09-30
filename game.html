@@ -2156,6 +2156,28 @@ const CARD_DB = {
   udalryk:           { id: 'udalryk', name: 'Udalryk', power: 1, tier: 'silver', faction: 'skellige', img: 'cards/udalryk.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => resolveUdalrykPlay(ctx.side, ctx.card) },
                                     { trigger: 'onAllyPlay', effect: (card, info) => { applyDamage(card, 1, { side: info.side, card }); } } ] },
+  /* ---- Skellige golds ---- */
+  // Play (may): deal 1 damage four times (sequential picks, like Brokvar Archer).
+  hjalmar:           { id: 'hjalmar', name: 'Hjalmar', power: 3, tier: 'gold', faction: 'skellige', img: 'cards/hjalmar.jpg', playDamageSeq: 4, playDamageSeqAmount: 1, abilities: [] },
+  // Bloodthirst 1. Order: play a Bronze card from your discard pile.
+  king_bran:         { id: 'king_bran', name: 'King Bran', power: 3, tier: 'gold', faction: 'skellige', img: 'cards/king_bran.jpg', bloodthirst: 1,
+                       abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze', smartPick: true,
+                                      filter: c => !c.special && c.power >= 1 } ] },
+  // Bloodthirst 2.
+  madman_lugos:      { id: 'madman_lugos', name: 'Madman Lugos', power: 4, tier: 'gold', faction: 'skellige', img: 'cards/madman_lugos.jpg', bloodthirst: 2, abilities: [] },
+  // Order: deal damage to another card equal to its current power minus 1 (leaves it at 1 power; cards with 1 or less power aren't valid targets).
+  cerys:             { id: 'cerys', name: 'Cerys', power: 6, tier: 'gold', faction: 'skellige', img: 'cards/cerys.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, leavesOne: true, excludeSelf: true, amount: 0,
+                                      validTargets: (side, card) => cardsInPlayExcept(card).filter(c => c.power > 1),
+                                      effect: (ctx, target) => applyDamage(target, Math.max(0, target.power - 1)) } ] },
+  // Play: discard the highest-power card(s) in play, both sides (not herself). Order: deal 1 damage twice.
+  coral:             { id: 'coral', name: 'Coral', power: 2, tier: 'gold', faction: 'skellige', img: 'cards/coral.jpg',
+                       abilities: [ { trigger: 'onPlay', effect: resolveCoral },
+                                    { trigger: 'order', needsTarget: true, seqDamage: 2, amount: 1 } ] },
+  // Bloodthirst 1. Order: deal 1 damage three times.
+  crach_an_craite:   { id: 'crach_an_craite', name: 'Crach an Craite', power: 3, tier: 'gold', faction: 'skellige', img: 'cards/crach_an_craite.jpg', bloodthirst: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, seqDamage: 3, amount: 1 } ] },
+
   /* ---- Dwarves (faction: 'mahakam') -- bronze batch. Buff reactions
      (Defender / Smith / Berserker / Chariot) hang off onCardBuffed(). ---- */
   // Play (may) AND Order: deal 2 damage.
@@ -4444,6 +4466,22 @@ function resolveSaesenthessis(ctx) {
   logMsg(`Saesenthessis discards ${targets.map(t => t.card.name).join(', ')} (${maxPower} power).`);
   burnCardsInPlay(targets.map(t => t.card));
 }
+// Coral: like Scorch -- every card in play with the highest power (both sides, ties
+// all go; not Coral herself, no card is immune) is destroyed with the burn fx.
+// Destroyed, not damaged: no damage-dealt event.
+function resolveCoral(ctx) {
+  const inPlay = [];
+  ['player', 'ai'].forEach(side => {
+    state.players[side].board.forEach(card => {
+      if (card.uid !== ctx.card.uid && !card.floatingSpecial && card.power > 0) inPlay.push({ side, card });
+    });
+  });
+  if (inPlay.length === 0) return;
+  const maxPower = Math.max(...inPlay.map(x => x.card.power));
+  const targets = inPlay.filter(x => x.card.power === maxPower);
+  logMsg(`Coral discards ${targets.map(t => t.card.name).join(', ')} (${maxPower} power).`);
+  burnCardsInPlay(targets.map(t => t.card));
+}
 function resolveVillentretenmerth(ctx) {
   const inPlay = [];
   ['player', 'ai'].forEach(side => {
@@ -5300,7 +5338,7 @@ function aiPlanComboKill() {
   const sources = ai.board.filter(c => {
     if (!isOrderReady('ai', c)) return false;
     const a = findOrderAbility(c);
-    return a && (a.isDamage || a.seqDamage);
+    return a && (a.isDamage || a.seqDamage) && !a.leavesOne;
   }).slice(0, 10);
   const playOptions = [null, ...ai.hand.filter(c => aiPlayDamageFor(c, 0) > 0 || c.playDamagePlusOrdersUsed || c.playDamageFromDeckTop || c.playRefreshOrder || c.playRefreshMulti)];
   if (sources.length === 0 && playOptions.length === 1) return null;
@@ -5418,7 +5456,7 @@ function aiPickNextOrderCard(candidates) {
   // (Tuirseach Veteran's Bloodthirst and Heymaey Skald's buff go before the
   // damage Orders: Veteran needs to be active first, and Skald's refresh comes
   // from the turn's first damage.)
-  const rank = c => c.refreshOnSecondOrder ? 0 : c.refreshOnBuffed ? 0.5 : (findOrderAbility(c) || {}).grantsBloodthirst ? 0.2 : (c.refreshOnFirstDamage || c.refreshOnOtherDamage) ? 0.3 : (c.id === 'svanrige' || c.id === 'an_craite_longship') ? 2.5 : c.id === 'brouver_hoog' ? 3 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
+  const rank = c => c.refreshOnSecondOrder ? 0 : c.refreshOnBuffed ? 0.5 : (findOrderAbility(c) || {}).grantsBloodthirst ? 0.2 : (c.refreshOnFirstDamage || c.refreshOnOtherDamage) ? 0.3 : (findOrderAbility(c) || {}).leavesOne ? 0.35 : (c.id === 'svanrige' || c.id === 'an_craite_longship') ? 2.5 : c.id === 'brouver_hoog' ? 3 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
   return candidates.slice().sort((a, b) => rank(a) - rank(b))[0];
 }
 
@@ -5495,6 +5533,7 @@ function aiOrderBestValue(c) {
   if (!a) return 0;
   if (a.isScorch) return Math.max(0, ...state.players.player.board.map(e => e.power)) * 2;
   if (a.doublesSelf) return Math.max(6, c.power * 4);
+  if (a.leavesOne) return 6;
   if (a.isDamage) return Math.max(a.amount || 0, c.id === 'seltkirk' ? 4 : 0, a.amountFn ? 6 : 0);
   if (a.isDiscardPlay) return Math.max(0, ...state.players.ai.graveyard.map(g => g.power)) + 6;
   if (a.isRefresh) return 6 * (a.multiRefresh || 1);
@@ -5519,7 +5558,7 @@ function aiMaxSwingUpperBound() {
     b += (c.playTargetDamage || 0) + (c.playDamagePlusOrdersUsed ? 6 : 0) + (c.playDamageFromDeckTop ? 10 : 0);
     b += (c.playBuffRepeat || 0) * (c.playBuffAmount || 1) + (c.playBuffMulti || 0) + (c.id === 'siege_tower' ? 3 : 0);
     b += (c.playDamageMulti || 0) * (c.playDamageMultiAmount || 1) + (c.playDamageSeq || 0) * (c.playDamageSeqAmount || 1) + (c.id === 'shieldmaiden' ? 3 : 0) + (c.bloodthirst || 0) * 3;
-    if (c.special || c.id === 'villentretenmerth' || c.id === 'saesenthessis' || c.playDiscardHighestIfOrders) b += topEnemyTotal + 10;
+    if (c.special || c.id === 'villentretenmerth' || c.id === 'saesenthessis' || c.id === 'coral' || c.playDiscardHighestIfOrders) b += topEnemyTotal + 10;
     if (c.discardChoice) b += graveMax + 10;
     if (c.playRefreshOrder || c.playRefreshMulti) b += 6 * (c.playRefreshMulti || 1);
     if (c.playMoveOnePower) b += 2;
@@ -5634,6 +5673,19 @@ async function aiUseAvailableOrders(opts) {
       await delay(500);
       continue;
     }
+    if (ability.leavesOne) {
+      // Cerys: leaves the highest-power enemy card at 1 power -- only worth it when something
+      // can finish it this turn (Birna Bran, another damage Order, a damaging card in hand)
+      const enemy = state.players.player.board.filter(c => c.power > 1 && !c.floatingSpecial);
+      if (enemy.length === 0 || !(ai.board.some(c => c.birnaFollowup) || aiHasDamageThisTurn(readyCard))) { heldBack.add(readyCard.uid); continue; }
+      const top = enemy.slice().sort((a, b) => b.power - a.power)[0];
+      state.aiFocusUid = top.uid;
+      await new Promise(resolve => applyOrderAbility('ai', readyCard, ability, top, resolve));
+      render();
+      await buffReactionsIdle();
+      await delay(500);
+      continue;
+    }
     if (ability.seqDamage) {
       // Blueboy Lugos: 3 sequential 1-damage hits on enemy cards (kills first)
       await startSequentialDamagePicks('ai', readyCard, ability.seqDamage, ability.amount || 1, null, null, { order: true });
@@ -5684,7 +5736,7 @@ async function aiUseAvailableOrders(opts) {
       const alive = enemyBoard.filter(c => c.power > 0 && c.uid !== doomed);
       const killable = alive.filter(c => c.power <= orderDamageAmount('ai', readyCard, ability) + aiBirnaBonus());
       if (killable.length > 0) {
-        target = pickDamageTarget(killable, (a, b) => a.power > b.power);
+        target = killable.find(c => c.uid === state.aiFocusUid) || pickDamageTarget(killable, (a, b) => a.power > b.power);
       } else if (alive.length > 0 && (aiWantsSecondOrder(readyAll.length) || aiDamageSideValue() > 0)) {
         // (non-lethal, but Bloodthirst / a Skald refresh makes the hit pay off)
         target = pickDamageTarget(alive, (a, b) => a.power > b.power);
@@ -5727,6 +5779,7 @@ async function aiTakeTurn() {
   const ai = state.players.ai;
   if (ai.passed) { endTurn('ai'); return; }
   state.aiComboPlan = null;
+  state.aiFocusUid = null;
 
   // Comfortably ahead at the start of its turn: sometimes just pass.
   if (aiShouldPassWhenAhead()) {
@@ -6213,6 +6266,7 @@ function pickKillableOrBestDamageTarget(enemyBoard, amount) {
     const t = enemyBoard.find(c => c.uid === plan.targetUid && c.power > 0 && c.power <= amount);
     if (t) return t;
   }
+  if (state.aiFocusUid) { const f = enemyBoard.find(c => c.uid === state.aiFocusUid && c.power > 0 && c.power <= amount); if (f) return f; }
   const alive = enemyBoard.filter(c => c.power > 0);
   if (alive.length > 0) enemyBoard = alive;
   const killable = enemyBoard.filter(c => c.power <= amount);
@@ -6420,17 +6474,17 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
    { enemy, own } -- the total power the player / the AI would lose -- or
    null if the card isn't Scorch-like right now. */
 function aiIsScorchLike(card) {
-  return card.id === 'scorch' || card.id === 'villentretenmerth' || card.id === 'saesenthessis' || dethmoldDiscardActive('ai', card);
+  return card.id === 'scorch' || card.id === 'villentretenmerth' || card.id === 'saesenthessis' || card.id === 'coral' || dethmoldDiscardActive('ai', card);
 }
 function aiScorchOutcome(card, assumeActive) {
   if (!assumeActive && !aiIsScorchLike(card)) return null;
   const all = [...state.players.player.board.map(c => ({ c, own: false })),
                ...state.players.ai.board.map(c => ({ c, own: true }))];
   let pool;
-  if (card.id === 'scorch') {
-    // resolveScorch: every card in play except Scorch itself (a special --
+  if (card.id === 'scorch' || card.id === 'coral') {
+    // resolveScorch (Coral: same, minus zero-power cards): every card in play except Scorch itself (a special --
     // it never counts as a target)
-    pool = all.filter(x => x.c.uid !== card.uid);
+    pool = all.filter(x => x.c.uid !== card.uid && (card.id === 'scorch' || x.c.power > 0));
   } else {
     // resolveVillentretenmerth: the card is already on the board when its
     // Play resolves, so it can catch itself if it's tied highest.

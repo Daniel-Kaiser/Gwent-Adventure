@@ -117,7 +117,64 @@
 
   /* ---- Log dropdown, pinned next to the hamburger menu at the far
      top-left corner of the screen. ---- */
-  #logWrap { position: fixed; top: 10px; left: 54px; z-index: 50; }
+  #logWrap { position: fixed; top: 10px; left: 54px; z-index: 50; display: flex; align-items: flex-start; gap: 8px; }
+  #devWrap { position: relative; display: none; }
+  #devWrap.show { display: block; }
+  #devToggle {
+    background: var(--panel);
+    color: var(--accent);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #devToggle:hover { background: var(--surface-hover); }
+  #devToggle .arrow { transition: transform .15s ease; font-size: 10px; }
+  #devToggle.open .arrow { transform: rotate(180deg); }
+  #devMenu {
+    display: none;
+    position: absolute;
+    top: 110%;
+    left: 0;
+    min-width: 190px;
+    background: var(--panel2);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 6px;
+    flex-direction: column;
+    gap: 4px;
+    box-shadow: 0 10px 24px #000a;
+  }
+  #devMenu.open { display: flex; }
+  #devMenu button {
+    background: transparent;
+    color: var(--text);
+    border: none;
+    text-align: left;
+    padding: 9px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #devMenu button:hover { background: var(--surface-hover); }
+  #libraryFooter { display: none; justify-content: flex-end; gap: 12px; padding-top: 14px; }
+  #libraryModal.devPick #libraryFooter { display: flex; }
+  #libraryFooter button {
+    background: #ffffff14; color: var(--text); border: 1px solid var(--border-strong);
+    border-radius: 6px; padding: 9px 26px; font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  #libraryFooter button:hover:not(:disabled) { background: #ffffff26; }
+  #libraryFooter #devPickAddBtn { background: var(--accent); color: #1a1208; border-color: var(--accent); }
+  #libraryFooter button:disabled { opacity: .4; cursor: default; }
+  #libraryModal.devPick #libraryGrid .card { cursor: pointer; }
+  #libraryGrid .card.devSelected { outline: 3px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 18px 4px var(--accent); }
+  #libraryTokenFilter { display: none; }
+  #libraryModal.devPick #libraryTokenFilter { display: flex; }
+
   #logToggle {
     background: var(--panel);
     color: var(--text);
@@ -1799,11 +1856,16 @@
           <label><input type="checkbox" data-tier="bronze" checked> Bronze</label>
           <label><input type="checkbox" data-tier="silver" checked> Silver</label>
           <label><input type="checkbox" data-tier="gold" checked> Gold</label>
+          <label id="libraryTokenFilter"><input type="checkbox" data-tier="token" checked> Token</label>
         </div>
       </div>
       <h2>Card Library</h2>
     </div>
     <div id="libraryGrid"></div>
+    <div id="libraryFooter">
+      <button type="button" id="devPickAddBtn" disabled>Add</button>
+      <button type="button" id="devPickCancelBtn">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -1854,6 +1916,13 @@
 <div id="logWrap">
   <button id="logToggle"><span class="arrow">▾</span> Game Log</button>
   <div id="log"></div>
+  <div id="devWrap">
+    <button id="devToggle" type="button"><span class="arrow">▾</span> Developer options</button>
+    <div id="devMenu">
+      <button type="button" id="devAddHandBtn">Add card to hand</button>
+      <button type="button" id="devAddDiscardBtn">Add card to discard</button>
+    </div>
+  </div>
 </div>
 
 <div id="gameWrap">
@@ -6787,6 +6856,7 @@ function hidePreview() {
 }
 
 function render() {
+  if (typeof updateDevOptionsVisibility === 'function') updateDevOptionsVisibility();
   if (!state) return;
 
   // crowns
@@ -8540,12 +8610,16 @@ const libraryModal = document.getElementById('libraryModal');
 const libraryGrid = document.getElementById('libraryGrid');
 const libraryFiltersBtn = document.getElementById('libraryFiltersBtn');
 const libraryFiltersMenu = document.getElementById('libraryFiltersMenu');
-const libraryTierFilters = { bronze: true, silver: true, gold: true };
+const libraryTierFilters = { bronze: true, silver: true, gold: true, token: true };
 const ALL_LIBRARY_CARDS = Object.values(CARD_DB).filter(c => !c.tutorialOnly && c.tier !== 'token').sort((a, b) => a.name.localeCompare(b.name));
 
+// Developer mode: the same library doubles as a card picker (see openDevPicker)
+let devPickMode = null;      // null | 'hand' | 'discard'
+let devPickSelected = null;  // card id
+const ALL_DEV_CARDS = Object.values(CARD_DB).filter(c => !c.tutorialOnly).sort((a, b) => a.name.localeCompare(b.name));
 function renderLibraryGrid() {
   libraryGrid.innerHTML = '';
-  const cards = ALL_LIBRARY_CARDS.filter(c => libraryTierFilters[c.tier]);
+  const cards = (devPickMode ? ALL_DEV_CARDS : ALL_LIBRARY_CARDS).filter(c => libraryTierFilters[c.tier]);
   if (cards.length === 0) {
     const msg = document.createElement('div');
     msg.className = 'empty-msg';
@@ -8556,11 +8630,23 @@ function renderLibraryGrid() {
   cards.forEach(card => {
     const el = cardEl(card, { disabled: true });
     attachPreview(el, card);
+    if (devPickMode) {
+      el.dataset.cardId = card.id;
+      if (devPickSelected === card.id) el.classList.add('devSelected');
+      el.addEventListener('click', () => {
+        devPickSelected = devPickSelected === card.id ? null : card.id;
+        libraryGrid.querySelectorAll('.card').forEach(x => x.classList.toggle('devSelected', x.dataset.cardId === devPickSelected));
+        document.getElementById('devPickAddBtn').disabled = !devPickSelected;
+      });
+    }
     libraryGrid.appendChild(el);
   });
 }
 
 function closeLibraryModal() {
+  devPickMode = null;
+  devPickSelected = null;
+  libraryModal.classList.remove('devPick');
   libraryModal.classList.remove('show');
   libraryFiltersMenu.classList.remove('show');
   hidePreview();
@@ -8593,6 +8679,54 @@ document.getElementById('settingsAutoEndTurnToggle').addEventListener('click', t
 updateAutoEndTurnButtons();
 document.getElementById('libraryCloseBtn').addEventListener('click', closeLibraryModal);
 libraryModal.addEventListener('click', (e) => { if (e.target === libraryModal) closeLibraryModal(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && libraryModal.classList.contains('show') && devPickMode) closeLibraryModal(); });
+
+/* =========================================================
+   DEVELOPER OPTIONS (Developer mode on, in-game, not in the tutorial): a
+   dropdown next to the Game Log with "Add card to hand / discard", which
+   opens the card library as a picker (click selects, Add / Cancel).
+========================================================= */
+const devWrap = document.getElementById('devWrap');
+const devToggle = document.getElementById('devToggle');
+const devMenu = document.getElementById('devMenu');
+function updateDevOptionsVisibility() {
+  const show = developerModeEnabled && !!state && !state.tutorial;
+  devWrap.classList.toggle('show', show);
+  if (!show) { devMenu.classList.remove('open'); devToggle.classList.remove('open'); }
+}
+devToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  devMenu.classList.toggle('open');
+  devToggle.classList.toggle('open');
+});
+document.addEventListener('click', (e) => {
+  if (!devWrap.contains(e.target)) { devMenu.classList.remove('open'); devToggle.classList.remove('open'); }
+});
+function openDevPicker(mode) {
+  devMenu.classList.remove('open'); devToggle.classList.remove('open');
+  if (!state || state.tutorial) return;
+  if (activeTargeting || buffReactionsBusy()) { showFloatingMessage('Finish the current action first', devToggle); return; }
+  devPickMode = mode;
+  devPickSelected = null;
+  document.getElementById('devPickAddBtn').disabled = true;
+  libraryModal.classList.add('devPick');
+  renderLibraryGrid();
+  libraryModal.classList.add('show');
+}
+document.getElementById('devAddHandBtn').addEventListener('click', () => openDevPicker('hand'));
+document.getElementById('devAddDiscardBtn').addEventListener('click', () => openDevPicker('discard'));
+document.getElementById('devPickCancelBtn').addEventListener('click', closeLibraryModal);
+document.getElementById('devPickAddBtn').addEventListener('click', () => {
+  const id = devPickSelected, mode = devPickMode;
+  closeLibraryModal();
+  if (!id || !state || !CARD_DB[id]) return;
+  const base = CARD_DB[id];
+  const card = { ...base, uid: `${id}_dev${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, basePower: base.power, owner: 'player' };
+  const p = state.players.player;
+  if (mode === 'hand') p.hand.push(card); else p.graveyard.push(card);
+  logMsg(`Developer: added ${base.name} to ${mode === 'hand' ? 'hand' : 'discard pile'}.`);
+  render();
+});
 
 libraryFiltersBtn.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -8650,12 +8784,13 @@ settingsVolumeSliderEl.addEventListener('input', () => setMusicVolumePct(Number(
 /* =========================================================
    SETTINGS MODAL (main menu) -- music volume, auto end turn, developer mode.
 ========================================================= */
-// Developer mode: toggle state only for now, no functionality attached yet.
+// Developer mode: unlocks the in-game Developer options dropdown (see updateDevOptionsVisibility).
 let developerModeEnabled = false;
 const settingsModal = document.getElementById('settingsModal');
 const settingsDevModeToggle = document.getElementById('settingsDevModeToggle');
 function updateDevModeToggle() {
   setSwitchState('settingsDevModeToggle', developerModeEnabled);
+  if (typeof updateDevOptionsVisibility === 'function') updateDevOptionsVisibility();
 }
 settingsDevModeToggle.addEventListener('click', () => {
   developerModeEnabled = !developerModeEnabled;

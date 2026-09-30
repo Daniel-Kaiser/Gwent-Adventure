@@ -230,6 +230,7 @@
      the fallback (no-art) look just gets a matching teal edge. */
   .card.token:not(.hasArt) { box-shadow: inset 0 0 0 2px #2bb3a3; }
   /* One-shot pop-in for a freshly created token (see createTokensRightOf). */
+  .card.bloodthirstNow { box-shadow: 0 0 0 2px #c0313a, 0 0 14px 3px rgba(192,49,58,.75); }
   .card.tokenAppear { animation: tokenAppear .45s cubic-bezier(.2,.7,.3,1.3); }
   @keyframes tokenAppear {
     0% { transform: scale(.3) translateY(-20px); opacity: 0; }
@@ -2083,6 +2084,35 @@ const CARD_DB = {
   temerian_infantry: { id: 'temerian_infantry', name: 'Temerian Infantry', power: 2, tier: 'bronze', faction: 'northern_realms', img: 'cards/temerian_infantry.jpg',
                        buffOnSecondOrder: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  /* ---- Skellige (faction: 'skellige') -- bronze batch. Bloodthirst N: each
+     time a card its controller controls deals damage (any source), it gains
+     +N power -- see onDamageDealt(). Damage-dealt bookkeeping (per side, per
+     turn) feeds Shieldmaiden and Heymaey Skald. ---- */
+  // Bloodthirst 1.
+  an_craite_raider:  { id: 'an_craite_raider', name: 'An Craite Raider', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_raider.jpg', bloodthirst: 1, abilities: [] },
+  // Order: gains Bloodthirst 2 for the rest of this turn (expires by itself, see bloodthirstOf()).
+  tuirseach_veteran: { id: 'tuirseach_veteran', name: 'Tuirseach Veteran', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/tuirseach_veteran.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: false, grantsBloodthirst: 2, effect: (ctx) => grantTempBloodthirst(ctx.side, ctx.card, 2) } ] },
+  // Play: may deal 1 damage to up to 3 other cards in play (multi-target session).
+  an_craite_boarding_party: { id: 'an_craite_boarding_party', name: 'An Craite Boarding Party', power: 2, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_boarding_party.jpg',
+                       playDamageMulti: 3, playDamageMultiAmount: 1, abilities: [] },
+  // Order: deal 1 damage to up to 3 other cards in play (multi-target session).
+  an_craite_greatsword: { id: 'an_craite_greatsword', name: 'An Craite Greatsword', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_greatsword.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: true, multiDamage: 3, amount: 1,
+                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial && c.power > 0) } ] },
+  // Bloodthirst 1. Order: deal 1 damage.
+  dimun_warship:     { id: 'dimun_warship', name: 'Dimun Warship', power: 2, tier: 'bronze', faction: 'skellige', img: 'cards/dimun_warship.jpg', bloodthirst: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Order: +1 to another card in play. Its Order refreshes the first time each turn its owner deals damage.
+  heymaey_skald:     { id: 'heymaey_skald', name: 'Heymaey Skald', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/heymaey_skald.jpg', refreshOnFirstDamage: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
+  // Play: gain power equal to the damage its owner dealt this turn (max +3). Order: deal 1 damage.
+  shieldmaiden:      { id: 'shieldmaiden', name: 'Shieldmaiden', power: 2, tier: 'bronze', faction: 'skellige', img: 'cards/shieldmaiden.jpg',
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => resolveShieldmaiden(ctx.side, ctx.card) },
+                                    { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Play (may): deal 1 damage, twice (two sequential picks). Order: deal 1 damage.
+  brokvar_archer:    { id: 'brokvar_archer', name: 'Brokvar Archer', power: 1, tier: 'bronze', faction: 'skellige', img: 'cards/brokvar_archer.jpg', playDamageSeq: 2, playDamageSeqAmount: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
   /* ---- Dwarves (faction: 'mahakam') -- bronze batch. Buff reactions
      (Defender / Smith / Berserker / Chariot) hang off onCardBuffed(). ---- */
   // Play (may) AND Order: deal 2 damage.
@@ -3759,6 +3789,7 @@ function resetPowerToBase(card) {
 function resetFieldEffects(card) {
   resetPowerToBase(card);
   card.orderUsed = false;
+  delete card.tempBloodthirst;
 }
 
 // Moves a card into a graveyard, resetting any effects it picked up while
@@ -3876,12 +3907,21 @@ function findCardByUid(uid) {
          state.players.ai.board.find(c => c.uid === uid) || null;
 }
 
-function applyDamage(card, amount) {
+// Who is dealing the damage of the effect currently resolving ({ side, card }).
+// Order effects call applyDamage(target, n) without a source, so
+// applyOrderAbility / applyPlayDamage set this around the effect.
+let currentDamageSource = null;
+function applyDamage(card, amount, source) {
   if (!amount) return;
+  const src = source || currentDamageSource;
+  const wasAlive = card.power > 0;
   applyPowerDelta(card, -amount);
   // Power never displays below 0 -- purely cosmetic, since the card is
   // discarded either way once it hits 0.
   if (card.power < 0) card.power = 0;
+  // Damage-dealt event (Bloodthirst, Shieldmaiden, Skald): every damaged card
+  // counts, lethal hits included. Fired before the kill resolves.
+  if (src && wasAlive) onDamageDealt(card, amount, src.side, src.card);
   if (card.power <= 0) {
     // The tutorial can hold a lethal hit at 0 power (visually) rather than
     // discarding it immediately, so it can explain the rule before the
@@ -3967,6 +4007,229 @@ function healTemporaryDamage() {
         card.power = card.basePower;
       }
     });
+  });
+}
+
+/* =========================================================
+   DAMAGE-DEALT EVENTS (Skellige)
+   onDamageDealt(card, amount, sourceSide, sourceCard) runs once per damaged
+   card, right after the damage lands (whatever dealt it: Play effect, Order,
+   spell). Per side and per turn (turnCounter stamp, so it resets by itself)
+   it keeps the total damage dealt:
+     player._dmgTurn / player._dmgDealt
+   Reactions:
+   - Bloodthirst N (card.bloodthirst, or a temporary one from Tuirseach
+     Veteran): each Bloodthirst card of the dealing side gains +N power. It
+     is a buff (applyPowerDelta: floating +N, buff sfx, onCardBuffed).
+     Cards already at 0 power (dying) don't gain anything.
+   - Heymaey Skald (refreshOnFirstDamage): its Order refreshes the first time
+     each turn its owner deals damage (if used).
+   - Shieldmaiden reads damageDealtThisTurn() when played.
+   ========================================================= */
+function damageDealtThisTurn(side) {
+  const p = state.players[side];
+  return p._dmgTurn === state.turnCounter ? (p._dmgDealt || 0) : 0;
+}
+function bloodthirstOf(card) {
+  let n = card.bloodthirst || 0;
+  if (card.tempBloodthirst && card.tempBloodthirst.turn === state.turnCounter) n += card.tempBloodthirst.n;
+  return n;
+}
+function hasTempBloodthirst(card) {
+  return !!(card.tempBloodthirst && state && card.tempBloodthirst.turn === state.turnCounter);
+}
+function grantTempBloodthirst(side, card, n) {
+  card.tempBloodthirst = { n, turn: state.turnCounter };
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} gains Bloodthirst ${n} for this turn.`);
+  const el = document.querySelector(`.card[data-uid="${card.uid}"]`);
+  if (el) showFloatingMessage(`Bloodthirst ${n}`, el);
+}
+let damageEventDepth = 0;
+function onDamageDealt(card, amount, sourceSide, sourceCard) {
+  if (!state || state.phase !== 'playing' || !(amount > 0) || !sourceSide) return;
+  if (damageEventDepth > 3) return; // recursion guard (reactions never deal damage today)
+  damageEventDepth++;
+  try {
+    const p = state.players[sourceSide];
+    const t = state.turnCounter;
+    if (p._dmgTurn !== t) { p._dmgTurn = t; p._dmgDealt = 0; }
+    const first = p._dmgDealt === 0;
+    p._dmgDealt += amount;
+    const who = sourceSide === 'player' ? 'Your' : "Opponent's";
+    if (first) {
+      p.board.filter(c => c.refreshOnFirstDamage && c.orderUsed).forEach(c => {
+        refreshOrder(c);
+        logMsg(`${who} ${c.name}'s Order is refreshed (first damage dealt this turn).`);
+      });
+    }
+    let gained = false;
+    p.board.slice().forEach(c => {
+      const n = bloodthirstOf(c);
+      if (n > 0 && c.power > 0 && !c.floatingSpecial) {
+        applyPowerDelta(c, n, { side: sourceSide, card: c });
+        gained = true;
+      }
+    });
+    if (gained) SFX.buff();
+  } finally {
+    damageEventDepth--;
+  }
+}
+// Shieldmaiden's Play: +power equal to the damage its owner dealt this turn (max +3).
+function resolveShieldmaiden(side, card) {
+  const gain = Math.min(3, damageDealtThisTurn(side));
+  if (gain <= 0) return;
+  // (the card usually isn't drawn yet when its Play fires: show the +N once it is)
+  const drawn = !!document.querySelector(`.card[data-uid="${card.uid}"]`);
+  applyPowerDelta(card, gain, { side, card });
+  if (!drawn) setTimeout(() => showFloatingDelta(card.uid, gain), 550);
+  SFX.buff();
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} gains ${gain} power.`);
+}
+
+// Deals `amount` damage from `card` to each target in turn (one projectile at
+// a time), then calls onDone. Buff reactions wait until the whole batch has
+// resolved, and other actions are held off meanwhile (seqBuffActive).
+function applyMultiDamage(side, card, targets, amount, onDone) {
+  const queue = targets.slice();
+  seqBuffActive++;
+  beginBuffBatch();
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    seqBuffActive = Math.max(0, seqBuffActive - 1);
+    endBuffBatch();
+    render();
+    if (onDone) onDone();
+  };
+  const next = () => {
+    if (!state || state.phase !== 'playing') { finish(); return; }
+    const t = queue.shift();
+    if (!t) { finish(); return; }
+    const live = findCardByUid(t.uid);
+    if (!live || live.power <= 0) { next(); return; }
+    shootProjectile(card.uid, live.uid, () => {
+      applyDamage(live, amount, { side, card });
+      logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} deals ${amount} damage to ${live.name}.`);
+      render();
+      setTimeout(next, 120);
+    });
+  };
+  next();
+}
+
+// Total "bloodthirst gain" per damage instance the AI currently has on board.
+function aiBloodthirstGain() {
+  return state.players.ai.board.reduce((s, c) => s + (c.power > 0 ? bloodthirstOf(c) : 0), 0);
+}
+// Side value of dealing damage now, beyond kills (damage that doesn't kill
+// heals at end of turn): Bloodthirst gains, plus a used Skald refreshing on
+// the turn's first damage.
+function aiDamageSideValue() {
+  const ai = state.players.ai;
+  let v = aiBloodthirstGain();
+  if (damageDealtThisTurn('ai') === 0 && ai.board.some(c => c.refreshOnFirstDamage && c.orderUsed)) v += 2;
+  return v;
+}
+// Up to n distinct enemy cards to hit for `amount`: kills first
+// (pickKillableOrBestDamageTarget), non-lethal hits only while they pay off.
+function aiPickMultiDamageTargets(n, amount) {
+  let pool = state.players.player.board.filter(c => c.power > 0 && !c.floatingSpecial);
+  const picks = [];
+  const side = aiDamageSideValue();
+  while (picks.length < n && pool.length) {
+    const t = pickKillableOrBestDamageTarget(pool, amount);
+    if (!t) break;
+    if (t.power > amount && side <= 0) break; // a non-lethal hit is wasted
+    picks.push(t);
+    pool = pool.filter(c => c.uid !== t.uid);
+  }
+  return picks;
+}
+
+// Will the AI deal damage this turn (besides via `except`)? Another ready damage
+// Order, or a damaging card in hand, with an enemy card to hit.
+function aiHasDamageThisTurn(except) {
+  const ai = state.players.ai;
+  if (!state.players.player.board.some(c => c.power > 0)) return false;
+  if (ai.board.some(c => c.uid !== (except && except.uid) && isOrderReady('ai', c) && (() => { const a = findOrderAbility(c); return a && (a.isDamage || a.multiDamage); })())) return true;
+  return ai.hand.some(c => c.playTargetDamage || c.playDamageMulti || c.playDamageSeq || c.playDamageFromDeckTop);
+}
+// Extra value of playing a hand card now from damage synergies: Shieldmaiden's
+// gain (damage already dealt this turn, max 3), Boarding Party / Archer's hits
+// (kills, plus Bloodthirst gains per hit).
+function aiPlayDamageValue(c) {
+  if (c.id === 'shieldmaiden') return Math.min(3, damageDealtThisTurn('ai'));
+  const hits = c.playDamageMulti || c.playDamageSeq || 0;
+  if (!hits) return 0;
+  const amt = c.playDamageMultiAmount || c.playDamageSeqAmount || 1;
+  const enemy = state.players.player.board.filter(e => e.power > 0);
+  let v = Math.min(hits, enemy.filter(e => e.power <= amt).length) * 1.5;
+  if (aiBloodthirstGain() > 0) v += Math.min(hits, c.playDamageSeq ? hits : enemy.length) * aiBloodthirstGain();
+  return v;
+}
+
+/* ---- Brokvar Archer's Play: "deal 1 damage" `n` times in a row, one pick at
+   a time (the same card may be picked again). Player: targeting noodle per
+   pick; finishing early (confirm) ends the rest. AI: enemy cards only,
+   finishing off one card with both hits when that kills it. Each hit is its
+   own damage event (Bloodthirst triggers per hit). ---- */
+function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone) {
+  return new Promise(resolve => {
+    const liveCard = state.players[side].board.find(c => c.uid === card.uid) || card;
+    beginBuffBatch();
+    seqBuffActive++;
+    pendingPlayTokenSpawns++;
+    let finished = false;
+    let left = n, last = null;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      seqBuffActive = Math.max(0, seqBuffActive - 1);
+      pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
+      endBuffBatch();
+      if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      render();
+      if (onDone) onDone();
+      if (side === 'player') maybeAutoEndTurn('player');
+      resolve();
+    };
+    const aiTarget = () => {
+      const enemy = state.players.player.board.filter(c => c.power > 0 && !c.floatingSpecial);
+      if (enemy.length === 0) return null;
+      const plan = state.aiComboPlan;
+      let t = last && enemy.find(c => c.uid === last && c.power <= left);
+      if (!t && plan) t = enemy.find(c => c.uid === plan.targetUid && c.power <= left);
+      if (!t) {
+        const killable = enemy.filter(c => c.power <= left);
+        if (killable.length) t = pickDamageTarget(killable, (a, b) => a.power > b.power);
+        else if (aiDamageSideValue() > 0) t = pickDamageTarget(enemy, (a, b) => a.power > b.power);
+      }
+      return t || null;
+    };
+    const next = () => {
+      if (left <= 0 || !state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
+      const all = [...state.players.player.board, ...state.players.ai.board].filter(c => c.power > 0 && !c.floatingSpecial);
+      if (all.length === 0) { finish(); return; }
+      if (side === 'player') {
+        const startPick = () => {
+          if (!state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
+          if (activeTargeting) { setTimeout(startPick, 100); return; }
+          left--;
+          startTargeting({ side: 'player', card: liveCard, kind: 'playDamageSeq', amount: amt, filter: c => c.power > 0,
+                           onPicked: () => next(), onCancel: finish });
+        };
+        startPick();
+      } else {
+        const target = aiTarget();
+        if (!target) { finish(); return; }
+        left--;
+        last = target.uid;
+        setTimeout(() => applyPlayDamage('ai', liveCard, amt, target, () => { render(); next(); }), 300);
+      }
+    };
+    next();
   });
 }
 
@@ -4790,6 +5053,9 @@ function aiPlayDamageFor(card, ordersUsed) {
     const top = deck[deck.length - 1];
     return top ? Math.max(0, top.power) : 0;
   }
+  // Brokvar Archer: two hits (may focus one card); Boarding Party: 1 on the plan's target
+  if (card.playDamageSeq) return card.playDamageSeq * (card.playDamageSeqAmount || 1);
+  if (card.playDamageMulti) return card.playDamageMultiAmount || 1;
   if (!card.playTargetDamage) return 0;
   return card.playTargetDamage + (card.playDamagePlusOrdersUsed ? ordersUsed : 0);
 }
@@ -4827,7 +5093,7 @@ function aiPlanComboKill() {
   const buffers = ai.board.filter(c => {
     if (!isOrderReady('ai', c)) return false;
     const a = findOrderAbility(c);
-    return a && a.needsTarget && !a.isDamage && !a.isRefresh && !a.multiBuff && !a.multiRefresh && !a.seqBuff && !a.isDiscardPlay;
+    return a && a.needsTarget && !a.isDamage && !a.isRefresh && !a.multiBuff && !a.multiRefresh && !a.multiDamage && !a.seqBuff && !a.isDiscardPlay;
   });
 
   // Total damage a given set of Orders (+ optional Play card afterwards) deals.
@@ -4931,7 +5197,10 @@ function aiPickNextOrderCard(candidates) {
   // buffs, since his damage grows with his power.)
   // (Smith / Berserker / Figgis / Xavier go before other buff Orders, so a
   // buff can land on them AFTER their Order is spent and refresh it.)
-  const rank = c => c.refreshOnSecondOrder ? 0 : c.refreshOnBuffed ? 0.5 : c.id === 'brouver_hoog' ? 3 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
+  // (Tuirseach Veteran's Bloodthirst and Heymaey Skald's buff go before the
+  // damage Orders: Veteran needs to be active first, and Skald's refresh comes
+  // from the turn's first damage.)
+  const rank = c => c.refreshOnSecondOrder ? 0 : c.refreshOnBuffed ? 0.5 : (findOrderAbility(c) || {}).grantsBloodthirst ? 0.2 : c.refreshOnFirstDamage ? 0.3 : c.id === 'brouver_hoog' ? 3 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
   return candidates.slice().sort((a, b) => rank(a) - rank(b))[0];
 }
 
@@ -5004,6 +5273,8 @@ function aiOrderBestValue(c) {
   if (a.isDiscardPlay) return Math.max(0, ...state.players.ai.graveyard.map(g => g.power)) + 6;
   if (a.isRefresh) return 6 * (a.multiRefresh || 1);
   if (a.multiBuff) return a.multiBuff;
+  if (a.multiDamage) return a.multiDamage * (a.amount || 1) + 3;
+  if (a.grantsBloodthirst) return 4;
   if (a.seqBuff) return a.seqBuff * (a.amount || 1);
   return Math.max(a.amount || 0, 6); // buffs (+1..+3), self-buffs (Angouleme +6), tokens
 }
@@ -5020,6 +5291,7 @@ function aiMaxSwingUpperBound() {
     b += Math.max(0, c.power);
     b += (c.playTargetDamage || 0) + (c.playDamagePlusOrdersUsed ? 6 : 0) + (c.playDamageFromDeckTop ? 10 : 0);
     b += (c.playBuffRepeat || 0) * (c.playBuffAmount || 1) + (c.playBuffMulti || 0) + (c.id === 'siege_tower' ? 3 : 0);
+    b += (c.playDamageMulti || 0) * (c.playDamageMultiAmount || 1) + (c.playDamageSeq || 0) * (c.playDamageSeqAmount || 1) + (c.id === 'shieldmaiden' ? 3 : 0) + (c.bloodthirst || 0) * 3;
     if (c.special || c.id === 'villentretenmerth' || c.id === 'saesenthessis' || c.playDiscardHighestIfOrders) b += topEnemyTotal + 10;
     if (c.discardChoice) b += graveMax + 10;
     if (c.playRefreshOrder || c.playRefreshMulti) b += 6 * (c.playRefreshMulti || 1);
@@ -5135,6 +5407,21 @@ async function aiUseAvailableOrders(opts) {
       await delay(500);
       continue;
     }
+    if (ability.multiDamage) {
+      // An Craite Greatsword: 1 damage to up to 3 enemy cards -- kills first,
+      // non-lethal hits only while Bloodthirst / a Skald refresh pays for them
+      const picks = aiPickMultiDamageTargets(ability.multiDamage, ability.amount || 1);
+      if (picks.length === 0) { heldBack.add(readyCard.uid); continue; }
+      await new Promise(resolve => applyMultiTargetEffect({ side: 'ai', card: readyCard, kind: 'orderMulti', ability, damageAmount: ability.amount || 1, onDone: resolve }, picks.map(c => c.uid)));
+      await buffReactionsIdle();
+      await delay(500);
+      continue;
+    }
+    if (ability.grantsBloodthirst && !aiHasDamageThisTurn(readyCard)) {
+      // Tuirseach Veteran: pointless unless the AI will actually deal damage this turn
+      heldBack.add(readyCard.uid);
+      continue;
+    }
     if (ability.isScorch) {
       // King Henselt: only when the discard is net favorable (never when it
       // would hit only the AI's own cards) -- same evaluation as Scorch.
@@ -5162,7 +5449,8 @@ async function aiUseAvailableOrders(opts) {
       const killable = alive.filter(c => c.power <= orderDamageAmount('ai', readyCard, ability));
       if (killable.length > 0) {
         target = pickDamageTarget(killable, (a, b) => a.power > b.power);
-      } else if (alive.length > 0 && aiWantsSecondOrder(readyAll.length)) {
+      } else if (alive.length > 0 && (aiWantsSecondOrder(readyAll.length) || aiDamageSideValue() > 0)) {
+        // (non-lethal, but Bloodthirst / a Skald refresh makes the hit pay off)
         target = pickDamageTarget(alive, (a, b) => a.power > b.power);
       } else {
         heldBack.add(readyCard.uid);
@@ -5335,6 +5623,14 @@ async function aiTakeTurn() {
         });
         render();
       }
+    }
+    if (cardData.playDamageMulti) {
+      await delay(500);
+      await startPlayDamageMulti('ai', cardData, null);
+    }
+    if (cardData.playDamageSeq) {
+      await delay(500);
+      await startSequentialDamagePicks('ai', cardData, cardData.playDamageSeq, cardData.playDamageSeqAmount || 1, null);
     }
     if (cardData.playTargetRemoveBuffs) {
       const target = pickDebuffTarget('ai');
@@ -5773,6 +6069,34 @@ function startDeckTopDamage(side, card, notifyInfo, onDone) {
   });
 }
 
+// An Craite Boarding Party's Play: "you may deal 1 damage to up to three other
+// cards in play". Player: multi-target session (pick up to 3, click a picked
+// card again to deselect, click away + confirm to finish early). AI: enemy
+// cards only, kills first. Fizzles with no valid targets.
+function startPlayDamageMulti(side, card, notifyInfo, onDone) {
+  return new Promise(resolve => {
+    const liveCard = state.players[side].board.find(c => c.uid === card.uid) || card;
+    const amt = card.playDamageMultiAmount || 1;
+    const finish = () => {
+      if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      render();
+      if (onDone) onDone();
+      if (side === 'player') maybeAutoEndTurn('player');
+      resolve();
+    };
+    const others = [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== liveCard.uid && c.power > 0 && !c.floatingSpecial);
+    if (others.length === 0) { finish(); return; }
+    if (side === 'player') {
+      startTargeting({ side: 'player', card: liveCard, kind: 'playBuffMulti', max: card.playDamageMulti, selected: [], excludeSelf: true,
+                       filter: c => c.power > 0, damageAmount: amt, notifyInfo, onDone: () => { if (onDone) onDone(); resolve(); } });
+    } else {
+      const picks = aiPickMultiDamageTargets(card.playDamageMulti, amt);
+      if (picks.length === 0) { finish(); return; }
+      setTimeout(() => applyMultiDamage('ai', liveCard, picks, amt, finish), 300);
+    }
+  });
+}
+
 // Fires a card's deferred Play-triggered target effect (playTargetDamage or
 // playTargetRemoveBuffs) if it has one -- shared by every way a card can
 // enter play (hand plays and free plays from the graveyard alike), so the
@@ -5812,6 +6136,10 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
       const liveCard = state.players.ai.board.find(c => c.uid === card.uid) || card;
       applyPlayRemoveBuffs('ai', liveCard, target, () => finish());
     }
+  } else if (card.playDamageMulti) {
+    startPlayDamageMulti(side, card, notifyInfo, onDone);
+  } else if (card.playDamageSeq) {
+    startSequentialDamagePicks(side, card, card.playDamageSeq, card.playDamageSeqAmount || 1, notifyInfo, onDone);
   } else if (card.playBuffMulti) {
     if (side === 'player') {
       const validCount = [...state.players.player.board, ...state.players.ai.board]
@@ -5994,7 +6322,7 @@ function decideAiAction() {
   }
 
   // Siege Tower is worth 6 once 2+ Orders were used this turn, else 3.
-  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0) + aiPlayBuffValue(c);
+  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0) + aiPlayBuffValue(c) + aiPlayDamageValue(c);
   const sorted = [...hand].sort((a, b) => pv(a) - pv(b));
   const weakest = sorted[0];
   const strongest = sorted[sorted.length - 1];
@@ -6061,6 +6389,7 @@ function cardEl(card, opts = {}) {
   }
   div.title = card.special ? `${card.name} — special (${card.tier})` : `${card.name} — ${card.power} power (${card.tier})`;
   div.dataset.uid = card.uid;
+  if (hasTempBloodthirst(card)) div.classList.add('bloodthirstNow'); // Tuirseach Veteran's Order, this turn only
   div.innerHTML = `
     <div class="power${powerStateClass(card)}">${card.power}</div>
     <div class="name">${card.name}</div>
@@ -6745,6 +7074,13 @@ function cancelTargeting() {
 // Orders (ability.isDamage) shoot a projectile at the target first and only
 // apply once it lands; other Orders (buffs, etc.) resolve immediately.
 // onDone (optional) fires once the ability has actually been applied.
+// Runs an Order's effect with the damage source set, so any applyDamage inside
+// it is attributed to (side, card) for the damage-dealt events.
+function runOrderEffect(side, card, ability, ctx, target) {
+  const prev = currentDamageSource;
+  currentDamageSource = { side, card };
+  try { ability.effect(ctx, target); } finally { currentDamageSource = prev; }
+}
 function applyOrderAbility(side, card, ability, target, onDone) {
   // Damage amount fixed at activation time (Seltkirk's depends on Orders
   // already used this turn -- counted before this one).
@@ -6762,24 +7098,24 @@ function applyOrderAbility(side, card, ability, target, onDone) {
   };
   if (ability.isDamage && target.uid !== card.uid) {
     shootProjectile(card.uid, target.uid, () => {
-      ability.effect(ctxAtActivation, target);
+      runOrderEffect(side, card, ability, ctxAtActivation, target);
       finish();
     });
   } else if (!ability.isDamage && target.uid !== card.uid) {
     // a buff Order aimed at another card -- send a green buff projectile
     // over to it first, then apply the boost once it lands
     shootProjectile(card.uid, target.uid, () => {
-      ability.effect(ctxAtActivation, target);
+      runOrderEffect(side, card, ability, ctxAtActivation, target);
       finish();
     }, 'buff');
   } else if (!ability.isDamage) {
     // a self-buff (e.g. Angoulême) -- no projectile needed, just the sound
     // (Henselt's discard Order has its own burn sound instead)
-    ability.effect(ctxAtActivation, target);
+    runOrderEffect(side, card, ability, ctxAtActivation, target);
     if (!ability.isScorch) SFX.buff();
     finish();
   } else {
-    ability.effect(ctxAtActivation, target);
+    runOrderEffect(side, card, ability, ctxAtActivation, target);
     finish();
   }
 }
@@ -6795,11 +7131,11 @@ function applyPlayDamage(side, card, amount, target, onDone) {
   };
   if (target.uid !== card.uid) {
     shootProjectile(card.uid, target.uid, () => {
-      applyDamage(target, amount);
+      applyDamage(target, amount, { side, card });
       finish();
     });
   } else {
-    applyDamage(target, amount);
+    applyDamage(target, amount, { side, card });
     finish();
   }
 }
@@ -6860,6 +7196,10 @@ function resolveTargeting(targetCard) {
       if (onDone) onDone();
       if (side === 'player') maybeAutoEndTurn('player');
     });
+  } else if (kind === 'playDamageSeq') {
+    // one hit of Brokvar Archer's sequential damage
+    const { onPicked } = activeTargetingSnapshot;
+    applyPlayDamage(side, card, amount || 1, targetCard, () => { render(); if (onPicked) onPicked(); });
   } else if (kind === 'playBuffSeq') {
     // one pick of a sequential buff (Mahakam Adventurer / Guard)
     const { onPicked } = activeTargetingSnapshot;
@@ -6938,6 +7278,24 @@ function handleMultiTargetClick(targetCard) {
 // no effect, but the card itself already stayed on the board as normal.
 function applyMultiTargetEffect(session, targetUids) {
   const { side, card, notifyInfo, onDone } = session;
+  if (session.damageAmount) {
+    // Boarding Party (Play) / Greatsword (Order): damage to each pick, one at a time
+    const targets = targetUids.map(findCardByUid).filter(Boolean);
+    const isOrder = session.kind === 'orderMulti';
+    if (isOrder && targets.length > 0) {
+      card.orderUsed = true;
+      state.players[side].orderUsedThisTurn = true;
+      noteOrderUsed(side);
+      logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order.`);
+    }
+    applyMultiDamage(side, card, targets, session.damageAmount, () => {
+      if (!isOrder && notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      render();
+      if (onDone) onDone();
+      if (side === 'player') maybeAutoEndTurn('player');
+    });
+    return;
+  }
   if (session.kind === 'orderMulti') {
     // King Demavend's Order: consumed once its picks have all resolved
     const orderDone = () => {
@@ -7003,9 +7361,10 @@ function activateOrderAbility(side, card) {
     activateDiscardPlayOrder(side, card, ability);
   } else if (ability.seqBuff) {
     runSeqBuffOrder(side, card, ability);
-  } else if (ability.multiRefresh || ability.multiBuff) {
+  } else if (ability.multiRefresh || ability.multiBuff || ability.multiDamage) {
     const valid = new Set(ability.validTargets(side, card).map(c => c.uid));
-    startTargeting({ side, card, kind: 'orderMulti', ability, max: ability.multiRefresh || ability.multiBuff, selected: [],
+    startTargeting({ side, card, kind: 'orderMulti', ability, max: ability.multiRefresh || ability.multiBuff || ability.multiDamage, selected: [],
+                     damageAmount: ability.multiDamage ? (ability.amount || 1) : 0,
                      excludeSelf: true, filter: c => valid.has(c.uid) });
   } else if (ability.needsTarget) {
     const session = { side, card, kind: 'order', ability, excludeSelf: !!ability.excludeSelf };
@@ -7374,6 +7733,10 @@ function continueAfterPlayerPlay(playedCard, played) {
       startTargeting({ side: 'player', card: playedCard, kind: 'playDamage', amount: effectivePlayDamage('player', playedCard), notifyInfo });
     } else if (playedCard && playedCard.playTargetRemoveBuffs) {
       startTargeting({ side: 'player', card: playedCard, kind: 'playDebuff', notifyInfo });
+    } else if (playedCard && playedCard.playDamageMulti) {
+      startPlayDamageMulti('player', playedCard, notifyInfo);
+    } else if (playedCard && playedCard.playDamageSeq) {
+      startSequentialDamagePicks('player', playedCard, playedCard.playDamageSeq, playedCard.playDamageSeqAmount || 1, notifyInfo);
     } else if (playedCard && playedCard.playBuffMulti) {
       const validCount = [...state.players.player.board, ...state.players.ai.board]
         .filter(c => c.uid !== playedCard.uid).length;

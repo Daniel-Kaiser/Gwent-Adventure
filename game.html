@@ -230,6 +230,9 @@
      the fallback (no-art) look just gets a matching teal edge. */
   .card.token:not(.hasArt) { box-shadow: inset 0 0 0 2px #2bb3a3; }
   /* One-shot pop-in for a freshly created token (see createTokensRightOf). */
+  .card.holgerPending { animation: holgerPulse 1.2s ease-in-out infinite; }
+  .card.holgerPending::after { content: '\2694 4'; position: absolute; top: 4px; right: 4px; padding: 1px 5px; border-radius: 8px; background: #7a1c24; color: #fff; font: 700 11px sans-serif; z-index: 5; pointer-events: none; }
+  @keyframes holgerPulse { 0%,100% { box-shadow: 0 0 0 2px #c0313a, 0 0 6px 1px rgba(192,49,58,.5); } 50% { box-shadow: 0 0 0 2px #ff5a5a, 0 0 18px 5px rgba(255,90,90,.9); } }
   .card.bloodthirstNow { box-shadow: 0 0 0 2px #c0313a, 0 0 14px 3px rgba(192,49,58,.75); }
   .card.tokenAppear { animation: tokenAppear .45s cubic-bezier(.2,.7,.3,1.3); }
   @keyframes tokenAppear {
@@ -2116,8 +2119,43 @@ const CARD_DB = {
   // Play (mandatory target) AND Order: deal 1 damage.
   dimun_pirate:      { id: 'dimun_pirate', name: 'Dimun Pirate', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/dimun_pirate.jpg', playTargetDamage: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
-  // Passive: after an opponent plays their first card each turn, deal 1 damage to it if it has 2 or less power (see resolveLongships).
-  an_craite_longship: { id: 'an_craite_longship', name: 'An Craite Longship', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_longship.jpg', longshipMaxPower: 2, abilities: [] },
+  // Bloodthirst 1. Order: give another card in play power equal to this card's buffs (power above base, max +3).
+  an_craite_longship: { id: 'an_craite_longship', name: 'An Craite Longship', power: 2, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_longship.jpg', bloodthirst: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true,
+                                      validTargets: (side, card) => longshipBuffs(card) > 0 ? cardsInPlayExcept(card) : [],
+                                      effect: (ctx, target) => applyPowerDelta(target, longshipBuffs(ctx.card), ctx) } ] },
+
+  /* ---- Skellige silvers ---- */
+  vigi_the_loon:     { id: 'vigi_the_loon', name: 'Vigi the Loon', power: 5, tier: 'silver', faction: 'skellige', img: 'cards/vigi_the_loon.jpg', bloodthirst: 1, abilities: [] },
+  // Passive: after its owner deals damage to a card, if it has exactly 1 power left, deal 1 damage to it (queued follow-up).
+  birna_bran:        { id: 'birna_bran', name: 'Birna Bran', power: 4, tier: 'silver', faction: 'skellige', img: 'cards/birna_bran.jpg', birnaFollowup: true, abilities: [] },
+  // Order: deal 1 damage three times (sequential picks).
+  blueboy_lugos:     { id: 'blueboy_lugos', name: 'Blueboy Lugos', power: 3, tier: 'silver', faction: 'skellige', img: 'cards/blueboy_lugos.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: true, seqDamage: 3, amount: 1 } ] },
+  // Bloodthirst 1. Order: deal 2 damage.
+  djenge_frett:      { id: 'djenge_frett', name: 'Djenge Frett', power: 3, tier: 'silver', faction: 'skellige', img: 'cards/djenge_frett.jpg', bloodthirst: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
+  // Order: deal 1 damage. Refreshes the first time each turn its owner deals damage from another source.
+  folan:             { id: 'folan', name: 'Folan', power: 3, tier: 'silver', faction: 'skellige', img: 'cards/folan.jpg', refreshOnOtherDamage: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Play: after the opponent's next card this round is played, deal 4 damage to it (pending entry on its owner's side).
+  holger_blackhand:  { id: 'holger_blackhand', name: 'Holger Blackhand', power: 4, tier: 'silver', faction: 'skellige', img: 'cards/holger_blackhand.jpg',
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => addHolgerPending(ctx.side, ctx.card) } ] },
+  // Play (from hand only): deal 2 damage. Passive: whenever its owner deals nonlethal damage to a card, it is played from the discard pile.
+  morkvarg:          { id: 'morkvarg', name: 'Morkvarg', power: 2, tier: 'silver', faction: 'skellige', img: 'cards/morkvarg.jpg', playTargetDamage: 2, playDamageOnlyFromHand: true, morkvargReturn: true, abilities: [] },
+  // Bloodthirst 1. Order: play a Bronze card from your discard pile.
+  sigrdrifa:         { id: 'sigrdrifa', name: 'Sigrdrifa', power: 2, tier: 'silver', faction: 'skellige', img: 'cards/sigrdrifa.jpg', bloodthirst: 1,
+                       abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze', smartPick: true,
+                                      filter: c => !c.special && c.power >= 1 } ] },
+  // Order: give another card in play power equal to the damage its owner dealt this turn.
+  svanrige:          { id: 'svanrige', name: 'Svanrige', power: 4, tier: 'silver', faction: 'skellige', img: 'cards/svanrige.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true,
+                                      validTargets: (side, card) => damageDealtThisTurn(side) > 0 ? cardsInPlayExcept(card) : [],
+                                      effect: (ctx, target) => applyPowerDelta(target, damageDealtThisTurn(ctx.side), ctx) } ] },
+  // Play: +5 to itself. Passive: after its owner plays another card, deal 1 damage to it.
+  udalryk:           { id: 'udalryk', name: 'Udalryk', power: 1, tier: 'silver', faction: 'skellige', img: 'cards/udalryk.jpg',
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => resolveUdalrykPlay(ctx.side, ctx.card) },
+                                    { trigger: 'onAllyPlay', effect: (card, info) => { applyDamage(card, 1, { side: info.side, card }); } } ] },
   /* ---- Dwarves (faction: 'mahakam') -- bronze batch. Buff reactions
      (Defender / Smith / Berserker / Chariot) hang off onCardBuffed(). ---- */
   // Play (may) AND Order: deal 2 damage.
@@ -3399,7 +3437,7 @@ let buffReactionTally = { turn: -1, n: 0 };
 // projectile is in flight), so this keeps other Orders/actions from
 // starting a second, overlapping session.
 let seqBuffActive = 0;
-function buffReactionsBusy() { return buffReactionProcessing || buffReactionQueue.length > 0 || seqBuffActive > 0 || paulieReturnPending > 0 || longshipPending > 0; }
+function buffReactionsBusy() { return buffReactionProcessing || buffReactionQueue.length > 0 || seqBuffActive > 0 || paulieReturnPending > 0 || afterPlayPending > 0 || followupRunning || followupQueue.length > 0; }
 function beginBuffBatch() { buffBatchDepth++; }
 function endBuffBatch() { buffBatchDepth = Math.max(0, buffBatchDepth - 1); scheduleBuffReactions(); }
 function buffReactionsIdle() {
@@ -4067,6 +4105,16 @@ function onDamageDealt(card, amount, sourceSide, sourceCard) {
         logMsg(`${who} ${c.name}'s Order is refreshed (first damage dealt this turn).`);
       });
     }
+    // Folan: refresh the first time each turn its owner deals damage from ANOTHER source
+    p.board.forEach(c => {
+      if (c.refreshOnOtherDamage && c._folanTurn !== t && (!sourceCard || sourceCard.uid !== c.uid)) {
+        c._folanTurn = t;
+        if (c.orderUsed) { refreshOrder(c); logMsg(`${who} ${c.name}'s Order is refreshed.`); }
+      }
+    });
+    // follow-ups run after the damaging effect has finished
+    if (card.power === 1 && p.board.some(c => c.birnaFollowup)) queueFollowup({ type: 'birna', side: sourceSide, uid: card.uid });
+    if (card.power > 0 && p.graveyard.some(c => c.morkvargReturn)) queueFollowup({ type: 'morkvarg', side: sourceSide });
     let gained = false;
     p.board.slice().forEach(c => {
       const n = bloodthirstOf(c);
@@ -4079,6 +4127,26 @@ function onDamageDealt(card, amount, sourceSide, sourceCard) {
   } finally {
     damageEventDepth--;
   }
+}
+function cardsInPlayExcept(card) {
+  return [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial);
+}
+// An Craite Longship: its buffs = power above its base (net of damage), max +3.
+function longshipBuffs(card) {
+  const base = card.basePower !== undefined ? card.basePower : card.power;
+  return Math.min(3, Math.max(0, card.power - base));
+}
+function addHolgerPending(side, card) {
+  const p = state.players[side];
+  (p.holgerPending = p.holgerPending || []).push({ card });
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} waits for the next card ${side === 'player' ? 'the opponent plays' : 'you play'} this round.`);
+}
+// Udalryk's Play: +5 to itself (the +N shows once the card is drawn)
+function resolveUdalrykPlay(side, card) {
+  const drawn = !!document.querySelector(`.card[data-uid="${card.uid}"]`);
+  applyPowerDelta(card, 5, { side, card });
+  if (!drawn) setTimeout(() => showFloatingDelta(card.uid, 5), 550);
+  SFX.buff();
 }
 // Shieldmaiden's Play: +power equal to the damage its owner dealt this turn (max +3).
 function resolveShieldmaiden(side, card) {
@@ -4099,12 +4167,14 @@ function applyMultiDamage(side, card, targets, amount, onDone) {
   const queue = targets.slice();
   seqBuffActive++;
   beginBuffBatch();
+  beginDamageBatch();
   let finished = false;
   const finish = () => {
     if (finished) return;
     finished = true;
     seqBuffActive = Math.max(0, seqBuffActive - 1);
     endBuffBatch();
+    endDamageBatch();
     render();
     if (onDone) onDone();
   };
@@ -4124,6 +4194,10 @@ function applyMultiDamage(side, card, targets, amount, onDone) {
   next();
 }
 
+// The AI's Birna Bran finishes off a card left at 1 power: a hit kills anything with 1 more power.
+function aiBirnaBonus() {
+  return state && state.players.ai.board.some(c => c.birnaFollowup) ? 1 : 0;
+}
 // Total "bloodthirst gain" per damage instance the AI currently has on board.
 function aiBloodthirstGain() {
   return state.players.ai.board.reduce((s, c) => s + (c.power > 0 ? bloodthirstOf(c) : 0), 0);
@@ -4135,6 +4209,8 @@ function aiDamageSideValue() {
   const ai = state.players.ai;
   let v = aiBloodthirstGain();
   if (damageDealtThisTurn('ai') === 0 && ai.board.some(c => c.refreshOnFirstDamage && c.orderUsed)) v += 2;
+  if (ai.board.some(c => c.refreshOnOtherDamage && c.orderUsed)) v += 2;
+  if (ai.graveyard.some(c => c.morkvargReturn)) v += 3; // a nonlethal hit brings Morkvarg back
   return v;
 }
 // Up to n distinct enemy cards to hit for `amount`: kills first
@@ -4158,7 +4234,7 @@ function aiPickMultiDamageTargets(n, amount) {
 function aiHasDamageThisTurn(except) {
   const ai = state.players.ai;
   if (!state.players.player.board.some(c => c.power > 0)) return false;
-  if (ai.board.some(c => c.uid !== (except && except.uid) && isOrderReady('ai', c) && (() => { const a = findOrderAbility(c); return a && (a.isDamage || a.multiDamage); })())) return true;
+  if (ai.board.some(c => c.uid !== (except && except.uid) && isOrderReady('ai', c) && (() => { const a = findOrderAbility(c); return a && (a.isDamage || a.multiDamage || a.seqDamage); })())) return true;
   return ai.hand.some(c => c.playTargetDamage || c.playDamageMulti || c.playDamageSeq || c.playDamageFromDeckTop);
 }
 // Extra value of playing a hand card now from damage synergies: Shieldmaiden's
@@ -4180,20 +4256,30 @@ function aiPlayDamageValue(c) {
    pick; finishing early (confirm) ends the rest. AI: enemy cards only,
    finishing off one card with both hits when that kills it. Each hit is its
    own damage event (Bloodthirst triggers per hit). ---- */
-function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone) {
+function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone, opts) {
+  opts = opts || {};
   return new Promise(resolve => {
     const liveCard = state.players[side].board.find(c => c.uid === card.uid) || card;
     beginBuffBatch();
+    beginDamageBatch();
     seqBuffActive++;
     pendingPlayTokenSpawns++;
     let finished = false;
-    let left = n, last = null;
+    let left = n, last = null, picked = 0;
     const finish = () => {
       if (finished) return;
       finished = true;
       seqBuffActive = Math.max(0, seqBuffActive - 1);
       pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
       endBuffBatch();
+      endDamageBatch();
+      if (opts.order && picked > 0) {
+        // Blueboy Lugos' Order: consumed only if at least one hit landed
+        card.orderUsed = true;
+        state.players[side].orderUsedThisTurn = true;
+        noteOrderUsed(side);
+        logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order.`);
+      }
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
@@ -4205,6 +4291,7 @@ function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone) {
       if (enemy.length === 0) return null;
       const plan = state.aiComboPlan;
       let t = last && enemy.find(c => c.uid === last && c.power <= left);
+      if (!t && state.aiFocusUid) t = enemy.find(c => c.uid === state.aiFocusUid);
       if (!t && plan) t = enemy.find(c => c.uid === plan.targetUid && c.power <= left);
       if (!t) {
         const killable = enemy.filter(c => c.power <= left);
@@ -4223,7 +4310,8 @@ function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone) {
           if (activeTargeting) { setTimeout(startPick, 100); return; }
           left--;
           startTargeting({ side: 'player', card: liveCard, kind: 'playDamageSeq', amount: amt, filter: c => c.power > 0,
-                           onPicked: () => next(), onCancel: finish });
+                           orderMode: !!opts.order, getPicked: () => picked,
+                           onPicked: () => { picked++; next(); }, onCancel: finish });
         };
         startPick();
       } else {
@@ -4231,7 +4319,7 @@ function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone) {
         if (!target) { finish(); return; }
         left--;
         last = target.uid;
-        setTimeout(() => applyPlayDamage('ai', liveCard, amt, target, () => { render(); next(); }), 300);
+        setTimeout(() => applyPlayDamage('ai', liveCard, amt, target, () => { picked++; render(); next(); }), 300);
       }
     };
     next();
@@ -4602,7 +4690,7 @@ function flyExistingElement(el, toRect, durationMs, onDone) {
    fully resolved, which is exactly when a passive like Roach's needs to
    check in. */
 function notifyAllyPlay(side, playedCard, isFirstPlayThisTurn) {
-  if (isFirstPlayThisTurn) resolveLongships(side, playedCard);
+  resolveAfterOpponentPlay(side, playedCard);
   state.players[side].board.forEach(boardCard => {
     if (boardCard.uid === playedCard.uid || !boardCard.abilities) return;
     boardCard.abilities
@@ -4613,25 +4701,25 @@ function notifyAllyPlay(side, playedCard, isFirstPlayThisTurn) {
   triggerDiscardReturnPassives(side, playedCard);
 }
 
-/* An Craite Longship: after a side plays its FIRST card of a turn (any card
-   entering play that counts as the turn's first play: hand plays and free
-   plays alike, never tokens), each Longship on the OTHER side deals 1 damage to
-   it if it has 2 or less power at that moment (after its own Play resolved).
-   The damage is dealt by the Longship's owner (Bloodthirst, Shieldmaiden
-   count, Skald refresh). Longships resolve one after another; the turn is held
-   open (longshipPending) until they've landed, so the damage can't miss the
-   end-of-turn heal. */
-let longshipPending = 0;
-function resolveLongships(side, playedCard) {
+/* Holger Blackhand: "after your opponent plays their next card this round,
+   deal 4 damage to it". Each Holger's Play adds a pending entry to its owner's
+   `holgerPending` list (cleared at round end); when the OTHER side next puts a
+   card into play (hand play or free play, once that card's own effects have
+   resolved -- see notifyAllyPlay) every pending entry hits it for 4, one after
+   another, as damage dealt by the Holger's owner. Tokens and special cards
+   don't count. The turn is held open (afterPlayPending) until they've landed. */
+let afterPlayPending = 0;
+function resolveAfterOpponentPlay(side, playedCard) {
   if (!state || state.phase !== 'playing' || !playedCard || playedCard.special) return;
   const owner = otherSide(side);
-  const ships = state.players[owner].board.filter(c => c.longshipMaxPower !== undefined);
-  if (ships.length === 0) return;
-  longshipPending++;
+  const pend = state.players[owner].holgerPending;
+  if (!pend || pend.length === 0) return;
+  if (findCardOwnerSide(playedCard.uid) !== side) return;
+  const queue = pend.splice(0);
+  afterPlayPending++;
   pendingPlayTokenSpawns++;
-  const queue = ships.slice();
   const done = () => {
-    longshipPending = Math.max(0, longshipPending - 1);
+    afterPlayPending = Math.max(0, afterPlayPending - 1);
     pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
     if (state) {
       render();
@@ -4640,21 +4728,99 @@ function resolveLongships(side, playedCard) {
   };
   const next = () => {
     if (!state || state.phase !== 'playing') { done(); return; }
-    const ship = queue.shift();
-    if (!ship) { done(); return; }
+    const entry = queue.shift();
+    if (!entry) { done(); return; }
     const target = findCardByUid(playedCard.uid);
-    if (!target || target.power <= 0 || target.power > ship.longshipMaxPower ||
-        findCardOwnerSide(ship.uid) !== owner || findCardOwnerSide(target.uid) !== side) { next(); return; }
-    const el = document.querySelector(`.card[data-uid="${ship.uid}"]`);
-    if (el) showFloatingMessage('Ambush!', el);
-    setTimeout(() => shootProjectile(ship.uid, target.uid, () => {
-      applyDamage(target, 1, { side: owner, card: ship });
-      logMsg(`${owner === 'player' ? 'Your' : "Opponent's"} ${ship.name} deals 1 damage to ${target.name}.`);
+    if (!target || target.power <= 0) { next(); return; }
+    const src = entry.card;
+    const land = () => {
+      applyDamage(target, 4, { side: owner, card: src });
+      logMsg(`${owner === 'player' ? 'Your' : "Opponent's"} ${src.name} deals 4 damage to ${target.name}.`);
       render();
       setTimeout(next, 150);
-    }), 250);
+    };
+    if (findCardOwnerSide(src.uid) === owner) setTimeout(() => shootProjectile(src.uid, target.uid, land), 250);
+    else setTimeout(land, 250);
   };
   setTimeout(next, 200);
+}
+function holgerIsPending(card) {
+  return !!(state && ['player', 'ai'].some(s => (state.players[s].holgerPending || []).some(e => e.card.uid === card.uid)));
+}
+
+/* ---- Damage follow-ups (Birna Bran, Morkvarg): reactions to damage that run
+   AFTER the damaging effect has finished -- queued by onDamageDealt, processed
+   one at a time. While a multi-hit ability (Archer, Blueboy, Boarding Party,
+   Greatsword) is running, damageBatchDepth > 0 holds them back, so they never
+   interrupt it; each Birna check then reads the card's CURRENT power. Player
+   actions and the AI wait meanwhile (buffReactionsBusy), and a per-turn cap
+   guards against runaway chains.
+   - birna: the damaged card has exactly 1 power left -> each Birna on the
+     dealer's side deals 1 damage to it (the follow-up damage is itself damage
+     dealt, but it leaves 0 power so it can't re-trigger Birna).
+   - morkvarg: nonlethal damage -> the dealer's discarded Morkvarg is played
+     from the discard pile (its Play damage is skipped: not from hand). ---- */
+const FOLLOWUP_CAP = 60;
+let followupQueue = [], followupRunning = false, damageBatchDepth = 0, followupTally = { turn: -1, n: 0 };
+function beginDamageBatch() { damageBatchDepth++; }
+function endDamageBatch() { damageBatchDepth = Math.max(0, damageBatchDepth - 1); flushFollowups(); }
+function queueFollowup(f) {
+  if (!state) return;
+  if (followupTally.turn !== state.turnCounter) followupTally = { turn: state.turnCounter, n: 0 };
+  if (followupTally.n >= FOLLOWUP_CAP) return;
+  if (f.type === 'birna' && followupQueue.some(q => q.type === 'birna' && q.uid === f.uid)) return;
+  if (f.type === 'morkvarg' && followupQueue.filter(q => q.type === 'morkvarg' && q.side === f.side).length >=
+      state.players[f.side].graveyard.filter(c => c.morkvargReturn).length) return;
+  followupTally.n++;
+  followupQueue.push(f);
+  flushFollowups();
+}
+function flushFollowups() {
+  if (followupRunning || followupQueue.length === 0 || damageBatchDepth > 0) return;
+  followupRunning = true;
+  pendingPlayTokenSpawns++;
+  setTimeout(() => processFollowup(0), 150);
+}
+async function processFollowup(waited) {
+  if (!state || state.phase !== 'playing') followupQueue.length = 0;
+  if (followupQueue.length > 0 && (damageBatchDepth > 0 || activeTargeting) && waited < 10000) {
+    setTimeout(() => processFollowup(waited + 80), 80);
+    return;
+  }
+  damageBatchDepth = waited >= 10000 ? 0 : damageBatchDepth; // safety valve
+  const f = followupQueue.shift();
+  if (!f) {
+    followupRunning = false;
+    pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
+    if (state) {
+      render();
+      if (state.phase === 'playing' && state.activeTurn === 'player') maybeAutoEndTurn('player');
+    }
+    return;
+  }
+  try { await runFollowup(f); } catch (e) { console.error(e); }
+  setTimeout(() => processFollowup(0), 150);
+}
+async function runFollowup(f) {
+  if (f.type === 'birna') {
+    const who = f.side === 'player' ? 'Your' : "Opponent's";
+    for (const b of state.players[f.side].board.filter(c => c.birnaFollowup)) {
+      const t = findCardByUid(f.uid);
+      if (!t || t.power !== 1 || !state || state.phase !== 'playing') break;
+      await new Promise(res => shootProjectile(b.uid, t.uid, () => {
+        applyDamage(t, 1, { side: f.side, card: b });
+        logMsg(`${who} ${b.name} deals 1 damage to ${t.name}.`);
+        render();
+        res();
+      }));
+      await delay(150);
+    }
+  } else if (f.type === 'morkvarg') {
+    const m = state.players[f.side].graveyard.find(c => c.morkvargReturn);
+    if (!m) return;
+    logMsg(`${f.side === 'player' ? 'Your' : "Opponent's"} ${m.name} returns from the discard pile!`);
+    await playFreeCardWithAnimation(f.side, m.uid);
+  }
 }
 
 /* "Passive: whenever you play a Gold card, this card gets played from your
@@ -4957,6 +5123,8 @@ function endRound() {
     });
   });
 
+  state.players.player.holgerPending = [];
+  state.players.ai.holgerPending = [];
   // move board cards to graveyard (or back to hand, for cards like Ciri
   // that return to hand when their side lost the round)
   ['player', 'ai'].forEach(side => {
@@ -5132,7 +5300,7 @@ function aiPlanComboKill() {
   const sources = ai.board.filter(c => {
     if (!isOrderReady('ai', c)) return false;
     const a = findOrderAbility(c);
-    return a && a.isDamage;
+    return a && (a.isDamage || a.seqDamage);
   }).slice(0, 10);
   const playOptions = [null, ...ai.hand.filter(c => aiPlayDamageFor(c, 0) > 0 || c.playDamagePlusOrdersUsed || c.playDamageFromDeckTop || c.playRefreshOrder || c.playRefreshMulti)];
   if (sources.length === 0 && playOptions.length === 1) return null;
@@ -5143,7 +5311,7 @@ function aiPlanComboKill() {
   const buffers = ai.board.filter(c => {
     if (!isOrderReady('ai', c)) return false;
     const a = findOrderAbility(c);
-    return a && a.needsTarget && !a.isDamage && !a.isRefresh && !a.multiBuff && !a.multiRefresh && !a.multiDamage && !a.seqBuff && !a.isDiscardPlay;
+    return a && a.needsTarget && !a.isDamage && !a.isRefresh && !a.multiBuff && !a.multiRefresh && !a.multiDamage && !a.seqDamage && !a.seqBuff && !a.isDiscardPlay;
   });
 
   // Total damage a given set of Orders (+ optional Play card afterwards) deals.
@@ -5169,7 +5337,7 @@ function aiPlanComboKill() {
       let uses = (c.refreshOnSecondOrder && reachesSecond) ? 2 : 1;
       if (refreshPairs.some(r => r.dmgUid === c.uid)) uses++;
       orders += uses;
-      dmg += uses * (a.amountFn ? a.amountFn('ai', c) : (a.amount || 0));
+      dmg += uses * (a.amountFn ? a.amountFn('ai', c) : (a.amount || 0)) * (a.seqDamage || 1);
     });
     for (let i = 0; i < seltCount; i++) {
       dmg += (prior + orders) >= 1 ? 4 : 2;
@@ -5179,7 +5347,7 @@ function aiPlanComboKill() {
     if (play && (play.playRefreshOrder || play.playRefreshMulti)) {
       // Scout / Odrin / Foltest / Demavend played after the Orders: each
       // refreshed (bronze/token) damage Order in the subset fires once more.
-      const amt = x => { const a = findOrderAbility(x); return a.amountFn ? a.amountFn('ai', x) : (a.amount || 0); };
+      const amt = x => { const a = findOrderAbility(x); return (a.amountFn ? a.amountFn('ai', x) : (a.amount || 0)) * (a.seqDamage || 1); };
       pd = subset.filter(x => (x.tier === 'bronze' || x.tier === 'token') && (play.refreshAllowsScouts || x.id !== 'blue_stripes_scout'))
         .map(amt).sort((a, b) => b - a).slice(0, play.playRefreshMulti || 1).reduce((t, v) => t + v, 0);
     }
@@ -5250,7 +5418,7 @@ function aiPickNextOrderCard(candidates) {
   // (Tuirseach Veteran's Bloodthirst and Heymaey Skald's buff go before the
   // damage Orders: Veteran needs to be active first, and Skald's refresh comes
   // from the turn's first damage.)
-  const rank = c => c.refreshOnSecondOrder ? 0 : c.refreshOnBuffed ? 0.5 : (findOrderAbility(c) || {}).grantsBloodthirst ? 0.2 : c.refreshOnFirstDamage ? 0.3 : c.id === 'brouver_hoog' ? 3 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
+  const rank = c => c.refreshOnSecondOrder ? 0 : c.refreshOnBuffed ? 0.5 : (findOrderAbility(c) || {}).grantsBloodthirst ? 0.2 : (c.refreshOnFirstDamage || c.refreshOnOtherDamage) ? 0.3 : (c.id === 'svanrige' || c.id === 'an_craite_longship') ? 2.5 : c.id === 'brouver_hoog' ? 3 : (c.id === 'seltkirk' || c.id === 'sheldon_skaggs' || c.id === 'munro_bruys' ? 2 : 1);
   return candidates.slice().sort((a, b) => rank(a) - rank(b))[0];
 }
 
@@ -5282,7 +5450,15 @@ async function aiExecuteComboPlan(plan) {
       continue;
     }
     const ability = findOrderAbility(card);
-    await new Promise(resolve => applyOrderAbility('ai', card, ability, target, resolve));
+    if (ability.seqDamage) {
+      // Blueboy: all its hits focus the planned target
+      state.aiFocusUid = target.uid;
+      try { await startSequentialDamagePicks('ai', card, ability.seqDamage, ability.amount || 1, null, null, { order: true }); }
+      finally { state.aiFocusUid = null; }
+      if (!card.orderUsed) break;
+    } else {
+      await new Promise(resolve => applyOrderAbility('ai', card, ability, target, resolve));
+    }
     render();
     await delay(500);
   }
@@ -5325,6 +5501,7 @@ function aiOrderBestValue(c) {
   if (a.multiBuff) return a.multiBuff;
   if (a.multiDamage) return a.multiDamage * (a.amount || 1) + 3;
   if (a.grantsBloodthirst) return 4;
+  if (a.seqDamage) return a.seqDamage * (a.amount || 1) + 2;
   if (a.seqBuff) return a.seqBuff * (a.amount || 1);
   return Math.max(a.amount || 0, 6); // buffs (+1..+3), self-buffs (Angouleme +6), tokens
 }
@@ -5415,7 +5592,7 @@ async function aiUseAvailableOrders(opts) {
         heldBack.add(readyCard.uid);
         continue;
       }
-      const best = ability.reviveOrderUsableNow
+      const best = (ability.reviveOrderUsableNow || ability.smartPick)
         ? aiPickReviveTarget('ai', eligible)
         : eligible.slice().sort((a, b) => b.power - a.power)[0];
       const landed = playFreeCardWithAnimation('ai', best.uid);
@@ -5454,6 +5631,15 @@ async function aiUseAvailableOrders(opts) {
       const picks = aiPickMultiBuffTargets(readyCard, ability.multiBuff);
       if (picks.length === 0) { heldBack.add(readyCard.uid); continue; }
       await new Promise(resolve => applyMultiTargetEffect({ side: 'ai', card: readyCard, kind: 'orderMulti', ability, onDone: resolve }, picks.map(c => c.uid)));
+      await delay(500);
+      continue;
+    }
+    if (ability.seqDamage) {
+      // Blueboy Lugos: 3 sequential 1-damage hits on enemy cards (kills first)
+      await startSequentialDamagePicks('ai', readyCard, ability.seqDamage, ability.amount || 1, null, null, { order: true });
+      if (!readyCard.orderUsed) heldBack.add(readyCard.uid);
+      render();
+      await buffReactionsIdle();
       await delay(500);
       continue;
     }
@@ -5496,7 +5682,7 @@ async function aiUseAvailableOrders(opts) {
       // ... and never at a card the planned Play-damage will kill anyway
       const doomed = aiDoomedTargetUid();
       const alive = enemyBoard.filter(c => c.power > 0 && c.uid !== doomed);
-      const killable = alive.filter(c => c.power <= orderDamageAmount('ai', readyCard, ability));
+      const killable = alive.filter(c => c.power <= orderDamageAmount('ai', readyCard, ability) + aiBirnaBonus());
       if (killable.length > 0) {
         target = pickDamageTarget(killable, (a, b) => a.power > b.power);
       } else if (alive.length > 0 && (aiWantsSecondOrder(readyAll.length) || aiDamageSideValue() > 0)) {
@@ -6020,6 +6206,7 @@ function pickDamageTarget(enemyBoard, better) {
 // board can actually be killed by it, this falls back to the previous
 // highest-power-target behavior rather than doing nothing.
 function pickKillableOrBestDamageTarget(enemyBoard, amount) {
+  amount += aiBirnaBonus();
   // The AI's combo plan target, if this hit finishes it.
   const plan = state && state.aiComboPlan;
   if (plan) {
@@ -6158,7 +6345,9 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
     render();
     if (onDone) onDone();
   };
-  if (card.playDamageFromDeckTop) {
+  if (card.playDamageOnlyFromHand) {
+    finish(); // Morkvarg: its Play damage only applies when played from hand
+  } else if (card.playDamageFromDeckTop) {
     startDeckTopDamage(side, card, notifyInfo, onDone);
   } else if (card.playRefreshOrder) {
     startScoutRefresh(side, card, notifyInfo, onDone);
@@ -6317,17 +6506,18 @@ function aiBestRefreshPlay(hand) {
   cands.sort((a, b) => b.v - a.v || b.c.power - a.c.power);
   return cands[0].c;
 }
-// Player's Longships punish a first play of 2 or less power: when the AI hasn't
-// played yet this turn, lead with the weakest acceptable 3+ power card instead.
+// The player's pending Holger Blackhand hits the AI's next card for 4 per Holger:
+// don't feed it a card that dies for nothing -- lead with the weakest card unless the
+// planned one survives.
 function decideAiAction() {
   const d = decideAiActionBase();
   const ai = state.players.ai;
-  if (d.action !== 'play' || state.aiComboPlan || ai.firstPlayDone) return d;
-  if (!state.players.player.board.some(c => c.longshipMaxPower !== undefined)) return d;
+  const pend = (state.players.player.holgerPending || []).length;
+  if (d.action !== 'play' || state.aiComboPlan || pend === 0) return d;
   const cur = ai.hand.find(c => c.uid === d.uid);
-  if (!cur || cur.special || cur.power > 2) return d;
-  const alt = ai.hand.filter(c => !c.special && c.power >= 3 && aiScorchAcceptable(c)).sort((a, b) => a.power - b.power)[0];
-  return alt ? { action: 'play', uid: alt.uid } : d;
+  if (!cur || cur.special || cur.power > 4 * pend) return d;
+  const weakest = ai.hand.filter(c => !c.special && aiScorchAcceptable(c)).sort((a, b) => a.power - b.power)[0];
+  return weakest && weakest.power < cur.power ? { action: 'play', uid: weakest.uid } : d;
 }
 function decideAiActionBase() {
   const ai = state.players.ai;
@@ -6384,7 +6574,7 @@ function decideAiActionBase() {
   }
 
   // Siege Tower is worth 6 once 2+ Orders were used this turn, else 3.
-  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0) + aiPlayBuffValue(c) + aiPlayDamageValue(c);
+  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0) + aiPlayBuffValue(c) + aiPlayDamageValue(c) + (c.id === 'holger_blackhand' ? 3 : 0) + (c.id === 'udalryk' ? 3 : 0);
   const sorted = [...hand].sort((a, b) => pv(a) - pv(b));
   const weakest = sorted[0];
   const strongest = sorted[sorted.length - 1];
@@ -6451,6 +6641,7 @@ function cardEl(card, opts = {}) {
   }
   div.title = card.special ? `${card.name} — special (${card.tier})` : `${card.name} — ${card.power} power (${card.tier})`;
   div.dataset.uid = card.uid;
+  if (holgerIsPending(card)) { div.classList.add('holgerPending'); div.title = `${card.name} - waiting for the opponent's next card (4 damage)`; }
   if (hasTempBloodthirst(card)) div.classList.add('bloodthirstNow'); // Tuirseach Veteran's Order, this turn only
   div.innerHTML = `
     <div class="power${powerStateClass(card)}">${card.power}</div>
@@ -7005,7 +7196,8 @@ function requestCancelTargeting() {
   // clicking a valid target -- clicking away (or pressing Escape) should
   // not let the player back out of a scripted targeted-ability beat.
   if (state && state.tutorial) return;
-  if (session.kind === 'order' || (session.kind === 'orderMulti' && session.selected.length === 0)) {
+  if (session.kind === 'order' || (session.kind === 'orderMulti' && session.selected.length === 0) ||
+      (session.kind === 'playDamageSeq' && session.orderMode && session.getPicked() === 0)) {
     // (a multi-target Order with nothing picked yet is simply backed out of)
     cancelTargeting();
     render();
@@ -7423,6 +7615,8 @@ function activateOrderAbility(side, card) {
     activateDiscardPlayOrder(side, card, ability);
   } else if (ability.seqBuff) {
     runSeqBuffOrder(side, card, ability);
+  } else if (ability.seqDamage) {
+    startSequentialDamagePicks(side, card, ability.seqDamage, ability.amount || 1, null, null, { order: true });
   } else if (ability.multiRefresh || ability.multiBuff || ability.multiDamage) {
     const valid = new Set(ability.validTargets(side, card).map(c => c.uid));
     startTargeting({ side, card, kind: 'orderMulti', ability, max: ability.multiRefresh || ability.multiBuff || ability.multiDamage, selected: [],

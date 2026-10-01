@@ -1669,6 +1669,35 @@
   @keyframes deckShake { 0%,100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
   .deckGhost { position: fixed; z-index: 2800; pointer-events: none; transform: translate(-50%, -50%) rotate(-3deg) scale(1.06); opacity: .93; box-shadow: 0 12px 28px #000c; }
 
+  /* ---- Themed popups used by the deck builder / Select deck ---- */
+  .gwDlgOverlay { position: fixed; inset: 0; background: #0009; display: flex; align-items: center; justify-content: center; z-index: 2600; }
+  .gwDlg { position: relative; width: 460px; max-width: calc(100vw - 32px); max-height: calc(100vh - 40px); background: var(--panel); border-radius: 14px; padding: 22px 26px 22px; box-shadow: 0 16px 40px #000c; color: var(--text); display: flex; flex-direction: column; gap: 12px; }
+  .gwDlg.wide { width: 640px; }
+  .gwDlg h2 { margin: 0 0 2px; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; text-align: center; }
+  .gwDlgBody { overflow-y: auto; min-height: 0; font-size: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .gwDlgBody p { margin: 0; }
+  .gwDlg input[type=text], .gwDlg textarea { width: 100%; box-sizing: border-box; background: #00000040; color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; padding: 9px 10px; font: 14px Arial, sans-serif; }
+  .gwDlg textarea { min-height: 110px; resize: vertical; }
+  .gwDlgBtns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .gwBtn { border: none; font-weight: 700; padding: 9px 22px; border-radius: 6px; cursor: pointer; font-size: 14px; background: var(--accent); color: var(--on-accent); }
+  .gwBtn:hover:not(:disabled) { filter: brightness(1.1); }
+  .gwBtn.secondary { background: var(--btn2); color: var(--text); border: 1px solid var(--border); }
+  .gwBtn.small { padding: 5px 12px; font-size: 12px; }
+  .gwBtn:disabled { opacity: .45; cursor: not-allowed; }
+  .gwErr { color: var(--bad); font-size: 13px; white-space: pre-wrap; }
+  .gwNote { color: var(--muted); font-size: 12px; }
+  .deckListRow { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: #00000030; }
+  .deckListRow .nm { flex: 1; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .deckListRow .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .deckListRow.current { border-color: var(--accent); }
+  .deckListRow.pick { cursor: pointer; }
+  .deckListRow.pick:hover:not(.off) { background: #ffffff14; }
+  .deckListRow.pick.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; background: #e0bc5c1c; }
+  .deckListRow.off { opacity: .45; cursor: not-allowed; }
+  #deckTools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; align-items: center; }
+  #deckNameLine { color: var(--text); font-size: 13px; font-weight: 700; margin-left: 12px; }
+  #deckNameLine .dirty { color: var(--accent); }
+
   /* ---- Click-to-start gate (guarantees a user gesture before any audio
      is attempted, so the browser never blocks the main-menu music) ---- */
   #clickToStartOverlay {
@@ -1905,7 +1934,15 @@
 </div>
 
 <div id="deckScreen">
-  <div id="deckHeader"><h2>Your Deck</h2><button type="button" id="deckSaveBtn" title="Coming soon">Save deck</button></div>
+  <div id="deckHeader"><div style="display:flex;align-items:baseline"><h2>Your Deck</h2><span id="deckNameLine"></span></div></div>
+  <div id="deckTools">
+    <button type="button" id="deckSaveBtn" class="gwBtn small">Save deck</button>
+    <button type="button" id="deckSaveAsBtn" class="gwBtn small secondary" style="display:none">Save as new</button>
+    <button type="button" id="deckMyBtn" class="gwBtn small secondary">My Decks</button>
+    <button type="button" id="deckNewBtn" class="gwBtn small secondary">New deck</button>
+    <button type="button" id="deckExportBtn" class="gwBtn small secondary">Export</button>
+    <button type="button" id="deckImportBtn" class="gwBtn small secondary">Import</button>
+  </div>
   <div id="deckBody"></div>
 </div>
 
@@ -2965,8 +3002,19 @@ const MenuMusic = (() => {
 
 let state = null;
 
+// Set by startGameWithDeck() right before startNewGame(); consumed (and
+// cleared) by newGameState so the tutorial / dev tests never see it.
+let pendingCustomDeck = null;
+function buildCustomDeck(ids) {
+  return ids.map((id, i) => {
+    const base = CARD_DB[id];
+    return { ...base, uid: `${id}_${i}_${Math.random().toString(36).slice(2, 7)}`, basePower: base.power };
+  });
+}
 function newGameState() {
+  const customIds = pendingCustomDeck;
   const startingPlayer = Math.random() < 0.5 ? 'player' : 'ai';
+  pendingCustomDeck = null;
   return {
     startingPlayer,          // who started round 1 — wins ties forever
     turnPlayer: startingPlayer, // who goes first THIS round
@@ -2975,7 +3023,7 @@ function newGameState() {
     roundScores: [],         // array of { player, ai, winner } power totals per round
     scores: { player: 0, ai: 0 }, // rounds won
     players: {
-      player: { deck: shuffle(buildDeck()), hand: [], board: [], graveyard: [], passed: false, mulliganUsed: false, actedThisTurn: false, orderUsedThisTurn: false, ordersUsedThisTurn: 0, firstPlayDone: false },
+      player: { deck: shuffle(customIds ? buildCustomDeck(customIds) : buildDeck()), hand: [], board: [], graveyard: [], passed: false, mulliganUsed: false, actedThisTurn: false, orderUsedThisTurn: false, ordersUsedThisTurn: 0, firstPlayDone: false },
       ai:     { deck: shuffle(buildDeck()), hand: [], board: [], graveyard: [], passed: false, mulliganUsed: false, actedThisTurn: false, orderUsedThisTurn: false, ordersUsedThisTurn: 0, firstPlayDone: false },
     },
     activeTurn: null,        // whose turn it currently is within the round
@@ -8227,7 +8275,7 @@ document.getElementById('newGameBtn').addEventListener('click', () => {
 });
 document.getElementById('newGameConfirmYes').addEventListener('click', () => {
   document.getElementById('newGameConfirmDialog').classList.remove('show');
-  startNewGame();
+  openSelectDeck((ids) => startGameWithDeck(ids));
 });
 document.getElementById('newGameConfirmNo').addEventListener('click', () => {
   document.getElementById('newGameConfirmDialog').classList.remove('show');
@@ -8559,7 +8607,7 @@ function showGameEnd() {
     // from under the new game once that stale callback does fire.
     Music.stop();
     Music.start();
-    startNewGame();
+    startGameWithDeck(resolveLastDeckIds()); // same deck choice as the last game
   });
 }
 
@@ -8617,11 +8665,13 @@ document.getElementById('clickToStartOverlay').addEventListener('click', () => {
 const newGameModal = document.getElementById('newGameModal');
 function closeNewGameModal() { newGameModal.classList.remove('show'); }
 function startQuickGameFromTitle() {
-  closeNewGameModal();
-  document.getElementById('titleScreen').style.display = 'none';
-  MenuMusic.fadeOutAndStop(1500);
-  Music.start(1500);
-  startNewGame();
+  openSelectDeck((ids) => {
+    closeNewGameModal();
+    document.getElementById('titleScreen').style.display = 'none';
+    MenuMusic.fadeOutAndStop(1500);
+    Music.start(1500);
+    startGameWithDeck(ids);
+  });
 }
 document.getElementById('titleNewGameBtn').addEventListener('click', () => newGameModal.classList.add('show'));
 document.getElementById('newGameCloseBtn').addEventListener('click', closeNewGameModal);
@@ -8694,7 +8744,11 @@ function renderLibraryGrid() {
   if (deckMode) updateLibraryDeckBadges();
 }
 
-function closeLibraryModal() {
+function closeLibraryModal(force) {
+  if (force !== true && libraryModal.classList.contains('deckBuild') && deckEditor.dirty) {
+    gwConfirm('Leave the deck builder? Your unsaved changes will be lost.', () => { resetDeckEditor(); closeLibraryModal(true); }, 'Leave', 'Stay');
+    return;
+  }
   if (libraryModal.classList.contains('deckBuild')) {
     libraryModal.classList.remove('deckBuild', 'dropRemove');
     document.getElementById('deckScreen').classList.remove('show');
@@ -8732,9 +8786,9 @@ function toggleAutoEndTurn() {
 }
 document.getElementById('settingsAutoEndTurnToggle').addEventListener('click', toggleAutoEndTurn);
 updateAutoEndTurnButtons();
-document.getElementById('libraryCloseBtn').addEventListener('click', closeLibraryModal);
+document.getElementById('libraryCloseBtn').addEventListener('click', () => closeLibraryModal());
 libraryModal.addEventListener('click', (e) => { if (e.target === libraryModal && !libraryModal.classList.contains('deckBuild')) closeLibraryModal(); });
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && libraryModal.classList.contains('show') && (devPickMode || libraryModal.classList.contains('deckBuild'))) closeLibraryModal(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !gwDlgStack.length && libraryModal.classList.contains('show') && (devPickMode || libraryModal.classList.contains('deckBuild'))) closeLibraryModal(); });
 
 /* =========================================================
    DECK BUILDER (unfinished): main-menu screen. The card library covers the
@@ -8800,7 +8854,7 @@ function renderDeckSlots() {
     const x = document.createElement('button');
     x.className = 'deckRemove'; x.type = 'button'; x.title = 'Remove from deck'; x.textContent = '\u00d7';
     x.addEventListener('pointerdown', (e) => e.stopPropagation());
-    x.addEventListener('click', (e) => { e.stopPropagation(); deckSlots[tier][idx] = null; hidePreview(); renderDeckSlots(); updateLibraryDeckBadges(); });
+    x.addEventListener('click', (e) => { e.stopPropagation(); deckSlots[tier][idx] = null; hidePreview(); deckChanged(); renderDeckSlots(); updateLibraryDeckBadges(); });
     slot.appendChild(x);
   });
 }
@@ -8857,7 +8911,7 @@ function endDeckDrag(e, cancel) {
   } else if (d.from && e.clientX >= window.innerWidth / 2) {
     deckSlots[d.from.tier][d.from.idx] = null; ok = true;
   }
-  if (ok) SFX.place();
+  if (ok) { SFX.place(); deckChanged(); }
   renderDeckSlots(); updateLibraryDeckBadges();
 }
 window.addEventListener('pointerup', (e) => endDeckDrag(e, false));
@@ -8865,11 +8919,364 @@ window.addEventListener('pointercancel', (e) => endDeckDrag(e, true));
 document.getElementById('titleDeckBtn').addEventListener('click', () => {
   libraryModal.classList.add('deckBuild');
   buildDeckScreen();
+  updateDeckNameLine();
   renderLibraryGrid();
   libraryModal.classList.add('show');
   document.getElementById('deckScreen').classList.add('show');
 });
-document.getElementById('deckSaveBtn').addEventListener('click', (e) => showFloatingMessage('Coming soon', e.currentTarget));
+
+
+
+/* =========================================================
+   THEMED DIALOGS (stackable; Escape closes the topmost)
+========================================================= */
+const gwDlgStack = [];
+function gwDialog(opts) {
+  const ov = document.createElement('div'); ov.className = 'gwDlgOverlay';
+  const box = document.createElement('div'); box.className = 'gwDlg' + (opts.wide ? ' wide' : '');
+  const x = document.createElement('button'); x.className = 'modalCloseBtn'; x.type = 'button'; x.setAttribute('aria-label', 'Close'); x.innerHTML = '&times;';
+  const h = document.createElement('h2'); h.textContent = opts.title || '';
+  const body = document.createElement('div'); body.className = 'gwDlgBody';
+  if (typeof opts.body === 'string') { const p = document.createElement('p'); p.textContent = opts.body; body.appendChild(p); }
+  else if (opts.body) body.appendChild(opts.body);
+  const btns = document.createElement('div'); btns.className = 'gwDlgBtns';
+  box.append(x, h, body, btns); ov.appendChild(box); document.body.appendChild(ov);
+  const dlg = { el: ov, box, body, btns, close() {
+    const i = gwDlgStack.indexOf(dlg); if (i >= 0) gwDlgStack.splice(i, 1);
+    ov.remove(); if (opts.onClose) opts.onClose();
+  } };
+  (opts.buttons || []).forEach(b => {
+    const el = document.createElement('button'); el.type = 'button'; el.className = 'gwBtn' + (b.secondary ? ' secondary' : '');
+    el.textContent = b.label; if (b.id) el.id = b.id; if (b.disabled) el.disabled = true;
+    el.addEventListener('click', () => { if (!b.onClick || b.onClick(dlg) !== false) dlg.close(); });
+    el.addEventListener('mouseenter', () => SFX.buttonHover && SFX.buttonHover());
+    btns.appendChild(el);
+  });
+  x.addEventListener('click', () => dlg.close());
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov) dlg.close(); });
+  gwDlgStack.push(dlg);
+  return dlg;
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !gwDlgStack.length) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  gwDlgStack[gwDlgStack.length - 1].close();
+}, true);
+function gwConfirm(text, onYes, yesLabel, noLabel) {
+  gwDialog({ title: 'Are you sure?', body: text, buttons: [
+    { label: noLabel || 'No', secondary: true },
+    { label: yesLabel || 'Yes', onClick: () => { onYes(); } },
+  ] });
+}
+function gwPrompt(title, def, onOk, okLabel) {
+  const inp = document.createElement('input'); inp.type = 'text'; inp.value = def || ''; inp.maxLength = 40;
+  const dlg = gwDialog({ title, body: inp, buttons: [
+    { label: 'Cancel', secondary: true },
+    { label: okLabel || 'Save', onClick: () => { const v = inp.value.trim(); if (!v) { inp.focus(); return false; } onOk(v); } },
+  ] });
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') dlg.btns.lastChild.click(); });
+  setTimeout(() => { inp.focus(); inp.select(); }, 0);
+  return dlg;
+}
+function gwInfo(title, text) { return gwDialog({ title, body: text, buttons: [{ label: 'OK' }] }); }
+
+/* =========================================================
+   SAVED DECKS (localStorage, versioned) + rules
+========================================================= */
+const DECKS_KEY = 'gwentAdventureDecks', LASTDECK_KEY = 'gwentAdventureLastDeck';
+const DECK_SLOT_TIERS = ['gold','gold','gold','silver','silver','silver','silver','silver','bronze','bronze','bronze','bronze','bronze','bronze','bronze','bronze'];
+let memDecks = []; // fallback when storage is unavailable
+function readDecks() {
+  try {
+    const raw = localStorage.getItem(DECKS_KEY);
+    if (!raw) return memDecks;
+    const o = JSON.parse(raw);
+    return (o && o.v === 1 && Array.isArray(o.decks)) ? o.decks.filter(d => d && Array.isArray(d.cards)) : [];
+  } catch (e) { return memDecks; }
+}
+function writeDecks(decks) {
+  memDecks = decks;
+  try { localStorage.setItem(DECKS_KEY, JSON.stringify({ v: 1, decks })); } catch (e) {}
+}
+function readLastDeck() { try { return localStorage.getItem(LASTDECK_KEY) || 'random'; } catch (e) { return 'random'; } }
+function writeLastDeck(v) { try { localStorage.setItem(LASTDECK_KEY, v); } catch (e) {} }
+const isDeckCard = (id) => !!(id && CARD_DB[id] && !CARD_DB[id].tutorialOnly && CARD_DB[id].tier !== 'token');
+const deckFilled = (d) => d.cards.filter(Boolean).length;
+const deckComplete = (d) => d.cards.length === 16 && d.cards.every(isDeckCard) && validateFlat(d.cards).ok;
+function flatSlots() { return [].concat(deckSlots.gold, deckSlots.silver, deckSlots.bronze); }
+function setSlotsFromFlat(f) { deckSlots.gold = f.slice(0, 3); deckSlots.silver = f.slice(3, 8); deckSlots.bronze = f.slice(8, 16); }
+function validateFlat(flat) { // flat: 16 ids/null in slot order -> { ok, errors }
+  const errors = [], counts = {};
+  flat.forEach((id, i) => {
+    if (!id) return;
+    const c = CARD_DB[id]; counts[id] = (counts[id] || 0) + 1;
+    if (counts[id] > deckMax(c.tier)) errors.push(`${c.name}: at most ${deckMax(c.tier)} cop${deckMax(c.tier) === 1 ? 'y' : 'ies'} allowed.`);
+    if (!cardFitsSlot(c, DECK_SLOT_TIERS[i])) errors.push(`${c.name} (${c.tier}) cannot sit in a ${DECK_SLOT_TIERS[i]} slot.`);
+  });
+  return { ok: errors.length === 0, errors: [...new Set(errors)] };
+}
+// Re-arranges any list of card ids into rule-legal slot order, or null if impossible.
+function arrangeIds(ids) {
+  const G = ids.filter(i => CARD_DB[i].tier === 'gold'), S = ids.filter(i => CARD_DB[i].tier === 'silver'), B = ids.filter(i => CARD_DB[i].tier === 'bronze');
+  if (ids.length > 16 || G.length > 3 || G.length + S.length > 8) return null;
+  const flat = Array(16).fill(null);
+  const free = (from, to) => { const r = []; for (let i = from; i < to; i++) if (!flat[i]) r.push(i); return r; };
+  G.forEach(id => flat[free(0, 3)[0]] = id);
+  S.forEach(id => { const f = free(3, 8).concat(free(0, 3)); flat[f[0]] = id; });
+  B.forEach(id => { const f = free(8, 16).concat(free(3, 8), free(0, 3)); flat[f[0]] = id; });
+  return flat;
+}
+// Cleans a flat/loose list (unknown ids dropped w/ notices) and arranges it. strict => copy-limit breaches are errors.
+function prepareDeck(rawIds, strict) {
+  const notices = [], errors = [];
+  const flat = (rawIds || []).slice(0, 16);
+  while (flat.length < 16) flat.push(null);
+  const clean = flat.map(id => {
+    if (!id) return null;
+    if (!isDeckCard(id)) { notices.push(`Unknown card "${id}" was skipped.`); return null; }
+    return id;
+  });
+  const counts = {}, kept = [];
+  clean.forEach(id => {
+    if (!id) return;
+    counts[id] = (counts[id] || 0) + 1;
+    if (counts[id] > deckMax(CARD_DB[id].tier)) {
+      if (strict) errors.push(`${CARD_DB[id].name}: at most ${deckMax(CARD_DB[id].tier)} cop${deckMax(CARD_DB[id].tier) === 1 ? 'y' : 'ies'} allowed.`);
+      else { notices.push(`Extra copy of ${CARD_DB[id].name} was skipped.`); counts[id]--; return; }
+    }
+    kept.push(id);
+  });
+  if (errors.length) return { errors: [...new Set(errors)], notices };
+  let slots = clean.map(id => id && kept.includes(id) ? id : null);
+  // drop skipped extra copies (non-strict): rebuild from kept ids
+  if (!strict) { const t = {}; slots = clean.map(id => { if (!id) return null; t[id] = (t[id] || 0) + 1; return t[id] > deckMax(CARD_DB[id].tier) ? null : id; }); }
+  if (!validateFlat(slots).ok) {
+    const arr = arrangeIds(slots.filter(Boolean));
+    if (!arr) return { errors: ['This deck has too many gold/silver cards to fit the slots (3 gold, 5 silver, 8 bronze minimum rarity rule).'], notices };
+    slots = arr;
+  }
+  return { slots, notices, errors: [] };
+}
+
+/* =========================================================
+   DECK EDITOR STATE, SAVE / LOAD / EXPORT / IMPORT
+========================================================= */
+const deckEditor = { id: null, name: '', dirty: false };
+function updateDeckNameLine() {
+  const n = document.getElementById('deckNameLine');
+  n.innerHTML = '';
+  const t = document.createElement('span'); t.textContent = deckEditor.id ? deckEditor.name : (deckEditor.name || 'Unsaved deck');
+  n.appendChild(t);
+  if (deckEditor.dirty) { const d = document.createElement('span'); d.className = 'dirty'; d.id = 'deckDirtyMark'; d.textContent = ' *'; d.title = 'Unsaved changes'; n.appendChild(d); }
+  document.getElementById('deckSaveAsBtn').style.display = deckEditor.id ? '' : 'none';
+}
+function deckChanged() { deckEditor.dirty = true; updateDeckNameLine(); }
+function refreshDeckUI() { if (deckBody.querySelector('.deckSlot')) { renderDeckSlots(); updateLibraryDeckBadges(); } updateDeckNameLine(); }
+function resetDeckEditor() {
+  deckSlots.gold = Array(3).fill(null); deckSlots.silver = Array(5).fill(null); deckSlots.bronze = Array(8).fill(null);
+  deckEditor.id = null; deckEditor.name = ''; deckEditor.dirty = false;
+  refreshDeckUI();
+}
+function afterUnsavedCheck(fn) {
+  if (deckEditor.dirty) gwConfirm('You have unsaved changes to the current deck. Discard them?', fn, 'Discard', 'Keep editing');
+  else fn();
+}
+function loadDeckIntoEditor(deck, opts) {
+  opts = opts || {};
+  const r = prepareDeck(deck.cards, !!opts.strict);
+  if (r.errors.length) return r;
+  setSlotsFromFlat(r.slots);
+  deckEditor.id = opts.asNew ? null : deck.id; deckEditor.name = deck.name || '';
+  deckEditor.dirty = !!opts.dirty;
+  refreshDeckUI(); hidePreview();
+  if (r.notices.length) gwInfo('Deck loaded with changes', r.notices.join('\n'));
+  return r;
+}
+const uniqueDeckId = () => 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function nextDeckName() {
+  const names = new Set(readDecks().map(d => d.name.toLowerCase()));
+  for (let n = 1; ; n++) if (!names.has(`my deck ${n}`)) return `My Deck ${n}`;
+}
+function suffixedName(name, ignoreId) {
+  const names = new Set(readDecks().filter(d => d.id !== ignoreId).map(d => d.name.toLowerCase()));
+  if (!names.has(name.toLowerCase())) return name;
+  for (let n = 2; ; n++) if (!names.has(`${name} ${n}`.toLowerCase())) return `${name} ${n}`;
+}
+function commitSave(id, name) {
+  const decks = readDecks().slice();
+  const rec = { id: id || uniqueDeckId(), name, cards: flatSlots(), updated: Date.now() };
+  const i = decks.findIndex(d => d.id === rec.id);
+  if (i >= 0) decks[i] = rec; else decks.push(rec);
+  writeDecks(decks);
+  deckEditor.id = rec.id; deckEditor.name = name; deckEditor.dirty = false;
+  updateDeckNameLine();
+  showFloatingMessage('Deck saved', document.getElementById('deckSaveBtn'));
+}
+function saveWithName(name, existingId) {
+  const dup = readDecks().find(d => d.name.toLowerCase() === name.toLowerCase() && d.id !== existingId);
+  if (!dup) { commitSave(existingId, name); return; }
+  gwDialog({ title: 'Name already used', body: `A deck called "${dup.name}" already exists.`, buttons: [
+    { label: 'Cancel', secondary: true },
+    { label: 'Keep both', secondary: true, onClick: () => { commitSave(existingId, suffixedName(name, existingId)); } },
+    { label: 'Overwrite', onClick: () => { commitSave(dup.id, dup.name); } },
+  ] });
+}
+function promptSaveAsNew() {
+  gwPrompt('Save deck', deckEditor.id ? suffixedName(deckEditor.name + ' copy') : nextDeckName(), (name) => saveWithName(name, null));
+}
+document.getElementById('deckSaveBtn').addEventListener('click', () => {
+  if (deckEditor.id && readDecks().some(d => d.id === deckEditor.id)) commitSave(deckEditor.id, deckEditor.name);
+  else { deckEditor.id = null; promptSaveAsNew(); }
+});
+document.getElementById('deckSaveAsBtn').addEventListener('click', promptSaveAsNew);
+document.getElementById('deckNewBtn').addEventListener('click', () => afterUnsavedCheck(() => resetDeckEditor()));
+
+function fmtDate(t) { try { return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); } catch (e) { return ''; } }
+function openMyDecks() {
+  const body = document.createElement('div');
+  const dlg = gwDialog({ title: 'My Decks', body, wide: true, buttons: [{ label: 'Close', secondary: true }] });
+  const paint = () => {
+    body.innerHTML = '';
+    const decks = readDecks();
+    if (!decks.length) { const p = document.createElement('p'); p.className = 'gwNote'; p.textContent = 'No saved decks yet. Fill some slots and press Save deck.'; body.appendChild(p); return; }
+    decks.slice().sort((a, b) => b.updated - a.updated).forEach(d => {
+      const row = document.createElement('div'); row.className = 'deckListRow' + (d.id === deckEditor.id ? ' current' : '');
+      row.innerHTML = '<span class="nm"></span><span class="meta"></span>';
+      row.querySelector('.nm').textContent = d.name;
+      row.querySelector('.meta').textContent = `${deckFilled(d)}/16 · ${fmtDate(d.updated)}`;
+      const mk = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'gwBtn small secondary'; b.textContent = label; b.addEventListener('click', fn); row.appendChild(b); return b; };
+      mk('Load', () => afterUnsavedCheck(() => { const r = loadDeckIntoEditor(d); if (r.errors.length) gwInfo('Cannot load deck', r.errors.join('\n')); else dlg.close(); }));
+      mk('Rename', () => gwPrompt('Rename deck', d.name, (v) => {
+        const nm = suffixedName(v, d.id);
+        writeDecks(readDecks().map(x => x.id === d.id ? { ...x, name: nm, updated: Date.now() } : x));
+        if (deckEditor.id === d.id) { deckEditor.name = nm; updateDeckNameLine(); }
+        paint();
+      }, 'Rename'));
+      mk('Duplicate', () => {
+        const copy = { ...d, id: uniqueDeckId(), name: suffixedName(d.name + ' copy'), cards: d.cards.slice(), updated: Date.now() };
+        writeDecks(readDecks().concat([copy])); paint();
+      });
+      mk('Delete', () => gwConfirm(`Delete "${d.name}"? This cannot be undone.`, () => {
+        writeDecks(readDecks().filter(x => x.id !== d.id));
+        if (deckEditor.id === d.id) { deckEditor.id = null; deckEditor.dirty = true; updateDeckNameLine(); }
+        paint();
+      }));
+      body.appendChild(row);
+    });
+  };
+  paint();
+}
+document.getElementById('deckMyBtn').addEventListener('click', openMyDecks);
+
+/* ---- Export / import ---- */
+function checksum(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16); }
+function encodeDeck(name, cards) {
+  const json = JSON.stringify({ n: name, c: cards.map(x => x || '') });
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  return `GWA1:${checksum(json)}:${b64}`;
+}
+function decodeDeck(text) {
+  text = (text || '').trim();
+  if (!text) throw new Error('Nothing to import. Paste a deck code or choose a file.');
+  if (text[0] === '{') {
+    let o; try { o = JSON.parse(text); } catch (e) { throw new Error('That file is not valid JSON.'); }
+    if (o.code) return decodeDeck(o.code);
+    if (!Array.isArray(o.cards)) throw new Error('That file does not look like a Gwent Adventure deck.');
+    return { name: String(o.name || 'Imported deck'), cards: o.cards.map(x => x || null) };
+  }
+  const m = /^GWA1:([0-9a-f]+):([A-Za-z0-9+\/=]+)$/.exec(text.replace(/\s+/g, ''));
+  if (!m) throw new Error('That is not a Gwent Adventure deck code (it should start with GWA1:).');
+  let json, o;
+  try { json = decodeURIComponent(escape(atob(m[2]))); o = JSON.parse(json); } catch (e) { throw new Error('The deck code is damaged and could not be read.'); }
+  if (checksum(json) !== m[1]) throw new Error('The deck code failed its checksum, so it was probably mistyped or cut short.');
+  if (!Array.isArray(o.c)) throw new Error('The deck code has no cards.');
+  return { name: String(o.n || 'Imported deck'), cards: o.c.map(x => x || null) };
+}
+document.getElementById('deckExportBtn').addEventListener('click', () => {
+  const cards = flatSlots();
+  if (!cards.some(Boolean)) { gwInfo('Nothing to export', 'Add some cards to the deck first.'); return; }
+  const name = deckEditor.name || 'My Deck';
+  const code = encodeDeck(name, cards);
+  const ta = document.createElement('textarea'); ta.readOnly = true; ta.value = code; ta.id = 'deckExportText';
+  const note = document.createElement('p'); note.className = 'gwNote'; note.id = 'deckExportNote';
+  const body = document.createElement('div'); body.append(ta, note);
+  const copy = () => {
+    const done = (ok) => { note.textContent = ok ? 'Copied to the clipboard.' : 'Could not copy automatically - select the code and copy it by hand.'; };
+    try { navigator.clipboard.writeText(code).then(() => done(true), () => { ta.select(); done(document.execCommand && document.execCommand('copy')); }); }
+    catch (e) { ta.select(); try { done(document.execCommand('copy')); } catch (e2) { done(false); } }
+  };
+  gwDialog({ title: 'Export deck', body, buttons: [
+    { label: 'Close', secondary: true },
+    { label: 'Download .json', secondary: true, id: 'deckDownloadBtn', onClick: () => {
+      const blob = new Blob([JSON.stringify({ format: 'GWA1', name, cards, code }, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') + '.json';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); return false;
+    } },
+    { label: 'Copy code', id: 'deckCopyBtn', onClick: () => { copy(); return false; } },
+  ] });
+  copy();
+});
+document.getElementById('deckImportBtn').addEventListener('click', () => {
+  const ta = document.createElement('textarea'); ta.id = 'deckImportText'; ta.placeholder = 'Paste a deck code (GWA1:...) here';
+  const file = document.createElement('input'); file.type = 'file'; file.accept = '.json,.txt,application/json,text/plain'; file.id = 'deckImportFile';
+  const err = document.createElement('div'); err.className = 'gwErr'; err.id = 'deckImportErr';
+  const body = document.createElement('div'); body.style.cssText = 'display:flex;flex-direction:column;gap:8px'; body.append(ta, file, err);
+  file.addEventListener('change', () => { const f = file.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { ta.value = String(r.result || ''); err.textContent = ''; }; r.readAsText(f); });
+  gwDialog({ title: 'Import deck', body, buttons: [
+    { label: 'Cancel', secondary: true },
+    { label: 'Import', id: 'deckImportGo', onClick: () => {
+      err.textContent = '';
+      let d;
+      try { d = decodeDeck(ta.value); } catch (e) { err.textContent = e.message; return false; }
+      const pre = prepareDeck(d.cards, true);
+      if (pre.errors.length) { err.textContent = pre.errors.join('\n'); return false; }
+      const go = () => { loadDeckIntoEditor(d, { strict: true, asNew: true, dirty: true }); };
+      if (deckEditor.dirty) { gwConfirm('You have unsaved changes to the current deck. Replace them with the imported deck?', go, 'Replace', 'Cancel'); } else go();
+    } },
+  ] });
+});
+
+/* =========================================================
+   SELECT DECK (Quick Game): Randomized deck or a complete saved deck
+========================================================= */
+function resolveLastDeckIds() { // card ids of the last choice, or null for randomized
+  const last = readLastDeck();
+  if (last === 'random') return null;
+  const d = readDecks().find(x => x.id === last);
+  return d && deckComplete(d) ? d.cards.slice() : null;
+}
+function startGameWithDeck(ids) {
+  pendingCustomDeck = ids && ids.length ? ids : null;
+  startNewGame();
+}
+function openSelectDeck(onPlay) {
+  const decks = readDecks();
+  let sel = readLastDeck();
+  if (sel !== 'random' && !decks.some(d => d.id === sel && deckComplete(d))) sel = 'random';
+  const list = document.createElement('div'); list.id = 'selectDeckList'; list.style.cssText = 'display:flex;flex-direction:column;gap:8px;overflow-y:auto;max-height:50vh';
+  const rows = [];
+  const addRow = (id, name, meta, ok) => {
+    const row = document.createElement('div'); row.className = 'deckListRow pick' + (ok ? '' : ' off'); row.dataset.deck = id;
+    row.innerHTML = '<span class="nm"></span><span class="meta"></span>';
+    row.querySelector('.nm').textContent = name; row.querySelector('.meta').textContent = meta;
+    if (ok) row.addEventListener('click', () => { sel = id; paint(); });
+    list.appendChild(row); rows.push(row);
+  };
+  addRow('random', 'Randomized deck', '16 cards', true);
+  decks.slice().sort((a, b) => b.updated - a.updated).forEach(d => {
+    const ok = deckComplete(d);
+    addRow(d.id, d.name, ok ? '16/16' : `Incomplete (${deckFilled(d)}/16)`, ok);
+  });
+  const paint = () => rows.forEach(r => r.classList.toggle('sel', r.dataset.deck === sel));
+  paint();
+  const body = document.createElement('div'); body.style.cssText = 'display:flex;flex-direction:column;gap:10px'; body.appendChild(list);
+  if (!decks.length) { const h = document.createElement('p'); h.className = 'gwNote'; h.id = 'selectDeckHint'; h.textContent = 'Build decks from the main menu.'; body.appendChild(h); }
+  gwDialog({ title: 'Select deck', body, buttons: [{ label: 'Play', id: 'selectDeckPlay', onClick: () => {
+    writeLastDeck(sel);
+    const d = decks.find(x => x.id === sel);
+    onPlay(sel === 'random' || !d ? null : d.cards.slice());
+  } }] });
+}
 
 /* =========================================================
    DEVELOPER OPTIONS (Developer mode on, in-game, not in the tutorial): a

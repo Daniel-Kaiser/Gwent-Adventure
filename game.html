@@ -2701,8 +2701,8 @@ const DECK_RULES = [
   { tier: 'gold', count: 3, maxCopies: 1 },
 ];
 
-function pickTierIds(tier, targetCount, maxCopies) {
-  const pool = shuffle(Object.values(CARD_DB).filter(c => c.tier === tier && !c.tutorialOnly && c.tier !== 'token').map(c => c.id));
+function pickTierIds(tier, targetCount, maxCopies, rng) {
+  const pool = shuffle(Object.values(CARD_DB).filter(c => c.tier === tier && !c.tutorialOnly && c.tier !== 'token').map(c => c.id), rng);
   if (pool.length === 0) return [];
   const counts = {};
   const result = [];
@@ -2720,23 +2720,94 @@ function pickTierIds(tier, targetCount, maxCopies) {
   return result;
 }
 
-function buildDeck() {
+// A random deck, built with the owning side's PRIVATE stream (the opponent
+// never learns which cards were picked until they are revealed). uids are
+// assigned later by finalizeDeck.
+function buildDeck(rng) {
   const deck = [];
-  let uid = 0;
   DECK_RULES.forEach(rule => {
-    const ids = pickTierIds(rule.tier, rule.count, rule.maxCopies);
+    const ids = pickTierIds(rule.tier, rule.count, rule.maxCopies, rng);
     ids.forEach(id => {
       const base = CARD_DB[id];
-      deck.push({ ...base, uid: `${id}_${uid++}_${Math.random().toString(36).slice(2, 7)}`, basePower: base.power });
+      deck.push({ ...base, basePower: base.power });
     });
   });
   return deck;
 }
 
-function shuffle(arr) {
+/* =========================================================
+   DETERMINISM (multiplayer prep -- see docs/multiplayer.md)
+   All randomness that affects game state goes through seeded streams:
+   - RNG.shared        : public coin flips both clients compute identically
+                         (starting player). Seed agreed by commit-reveal in PvP.
+   - rngPrivate(side)  : that side's deck building, shuffles and reshuffles.
+                         Only the owning client knows this seed in PvP.
+   - RNG.brain         : the local AI's decisions (never used in PvP).
+   Cosmetic randomness (particles, voice lines, music) stays Math.random and
+   must never feed back into state.
+   Card uids are opaque and deterministic: a side's own cards get 'p0','p1'..
+   / 'a0','a1'.. in post-shuffle deck order (they never reveal identity);
+   tokens get 'tok0','tok1'.. from a shared counter reset each game.
+========================================================= */
+function xmur3(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
+  return () => { h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); return (h ^= h >>> 16) >>> 0; };
+}
+function makeRng(seed) {
+  const sd = xmur3(String(seed));
+  let a = sd(), b = sd(), c = sd(), d = sd(), calls = 0;
+  const next = () => { // sfc32
+    a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0;
+    let t = (a + b) | 0; a = b ^ (b >>> 9); b = (c + (c << 3)) | 0; c = (c << 21) | (c >>> 11); d = (d + 1) | 0; t = (t + d) | 0; c = (c + t) | 0;
+    calls++;
+    return (t >>> 0) / 4294967296;
+  };
+  return { seed: String(seed), next, int: (n) => Math.floor(next() * n), calls: () => calls };
+}
+function randomSeedString() {
+  try { const a = new Uint32Array(2); crypto.getRandomValues(a); return a[0].toString(36) + a[1].toString(36); }
+  catch (e) { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+}
+const RNG = { shared: makeRng('init'), priv: { player: makeRng('init:p'), ai: makeRng('init:a') }, brain: makeRng('init:b') };
+function rngPrivate(side) { return RNG.priv[side]; }
+// Dev/test hook: set window.__gwaNextSeeds = { shared, player, ai } before a
+// game starts to replay it exactly (consumed by the next newGameState).
+function initMatchRng() {
+  const forced = window.__gwaNextSeeds;
+  window.__gwaNextSeeds = null;
+  const seeds = {
+    shared: (forced && forced.shared) || randomSeedString(),
+    player: (forced && forced.player) || randomSeedString(),
+    ai: (forced && forced.ai) || randomSeedString(),
+  };
+  RNG.shared = makeRng('shared:' + seeds.shared);
+  RNG.priv.player = makeRng('priv:' + seeds.player);
+  RNG.priv.ai = makeRng('priv:' + seeds.ai);
+  RNG.brain = makeRng('brain:' + seeds.ai);
+  return seeds;
+}
+// Shuffle a side's freshly built deck with its private stream and give each
+// card its opaque deterministic uid + original owner.
+function finalizeDeck(side, cards) {
+  const shuffled = shuffle(cards, rngPrivate(side));
+  shuffled.forEach(c => { c.uid = nextCardUid(side); c.owner = side; });
+  return shuffled;
+}
+function nextCardUid(side) {
+  if (!state && !nextCardUid.pending) nextCardUid.pending = { player: 0, ai: 0 };
+  const ctr = (state && state.uidCounters) || nextCardUid.pending;
+  return (side === 'player' ? 'p' : 'a') + (ctr[side]++);
+}
+
+// Fisher-Yates. `rng` is one of the seeded streams below (rngPrivate(side) /
+// RNG.shared); every shuffle that affects game state must pass one. Without
+// it (cosmetic use only) it falls back to Math.random.
+function shuffle(arr, rng) {
   const a = arr.slice();
+  const rand = rng ? () => rng.next() : Math.random;
   for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rand() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
@@ -3164,16 +3235,24 @@ let state = null;
 // cleared) by newGameState so the tutorial / dev tests never see it.
 let pendingCustomDeck = null;
 function buildCustomDeck(ids) {
-  return ids.map((id, i) => {
+  return ids.map((id) => {
     const base = CARD_DB[id];
-    return { ...base, uid: `${id}_${i}_${Math.random().toString(36).slice(2, 7)}`, basePower: base.power };
+    return { ...base, basePower: base.power };
   });
 }
 function newGameState() {
   const customIds = pendingCustomDeck;
-  const startingPlayer = Math.random() < 0.5 ? 'player' : 'ai';
   pendingCustomDeck = null;
+  const seeds = initMatchRng();
+  tokenUidCounter = 0;
+  nextCardUid.pending = { player: 0, ai: 0 };
+  const startingPlayer = RNG.shared.next() < 0.5 ? 'player' : 'ai';
+  const playerDeck = finalizeDeck('player', customIds ? buildCustomDeck(customIds) : buildDeck(rngPrivate('player')));
+  const aiDeck = finalizeDeck('ai', buildDeck(rngPrivate('ai')));
   return {
+    seeds,                   // { shared, player, ai } -- in PvP each client only knows shared + its own
+    uidCounters: nextCardUid.pending,
+    actionLog: [],           // every decision applied, in order (see applyAction)
     startingPlayer,          // who started round 1 — wins ties forever
     turnPlayer: startingPlayer, // who goes first THIS round
     round: 1,
@@ -3181,8 +3260,8 @@ function newGameState() {
     roundScores: [],         // array of { player, ai, winner } power totals per round
     scores: { player: 0, ai: 0 }, // rounds won
     players: {
-      player: { deck: shuffle(customIds ? buildCustomDeck(customIds) : buildDeck()), hand: [], board: [], graveyard: [], passed: false, mulliganUsed: false, actedThisTurn: false, orderUsedThisTurn: false, ordersUsedThisTurn: 0, firstPlayDone: false },
-      ai:     { deck: shuffle(buildDeck()), hand: [], board: [], graveyard: [], passed: false, mulliganUsed: false, actedThisTurn: false, orderUsedThisTurn: false, ordersUsedThisTurn: 0, firstPlayDone: false },
+      player: { deck: playerDeck, hand: [], board: [], graveyard: [], passed: false, mulliganUsed: false, actedThisTurn: false, orderUsedThisTurn: false, ordersUsedThisTurn: 0, firstPlayDone: false },
+      ai:     { deck: aiDeck, hand: [], board: [], graveyard: [], passed: false, mulliganUsed: false, actedThisTurn: false, orderUsedThisTurn: false, ordersUsedThisTurn: 0, firstPlayDone: false },
     },
     activeTurn: null,        // whose turn it currently is within the round
     turnCounter: 0,          // increments every time a new turn begins; lets
@@ -3556,7 +3635,7 @@ function flashOrderRefresh(uid) {
 let tokenUidCounter = 0;
 function createToken(id) {
   const base = CARD_DB[id];
-  return { ...base, uid: `${id}_tok${tokenUidCounter++}_${Math.random().toString(36).slice(2, 7)}`, basePower: base.power };
+  return { ...base, uid: `tok${tokenUidCounter++}`, basePower: base.power };
 }
 /* Play-effect token spawners (Poor Fucking Infantry, Kaedweni Sergeant)
    don't create their tokens the instant the card enters play -- the onPlay
@@ -4851,7 +4930,7 @@ async function handleDeckTopChoiceThenEndTurn(side, notifyInfo) {
   const rest = deck.filter(c => c.uid !== chosen.uid);
   // deck cards are drawn from the end of the array (drawCards uses .pop()),
   // so "on top" means the last element, not the first
-  state.players[side].deck = [...shuffle(rest), chosen];
+  state.players[side].deck = [...shuffle(rest, rngPrivate(side)), chosen];
   logMsg(`${side === 'player' ? 'You put' : 'Opponent puts'} ${chosen.name} on top of ${side === 'player' ? 'your' : 'their'} deck and shuffles the rest.`);
   finish();
 }
@@ -4891,7 +4970,7 @@ async function handleDeckBottomChoiceThenEndTurn(side, notifyInfo) {
   const rest = deck.filter(c => c.uid !== chosen.uid);
   // deck cards are drawn from the end of the array (drawCards uses .pop()),
   // so "the bottom" means the first element, not the last
-  state.players[targetSide].deck = [chosen, ...shuffle(rest)];
+  state.players[targetSide].deck = [chosen, ...shuffle(rest, rngPrivate(targetSide))]; // the deck's owner reshuffles
   logMsg(`${side === 'player' ? 'You bury' : 'Opponent buries'} ${chosen.name} at the bottom of ${targetSide === 'player' ? 'your' : "the opponent's"} deck and shuffles the rest.`);
   finish();
 }
@@ -6549,7 +6628,7 @@ function aiShouldPassWhenAhead() {
   if (state.round >= 3) return false;
   if (state.roundScores.some(r => r.winner === 'player')) return false;
   const lead = totalPower('ai') - totalPower('player');
-  return Math.random() < aiPassWhenAheadProbability(lead);
+  return RNG.brain.next() < aiPassWhenAheadProbability(lead);
 }
 
 async function aiUseAvailableOrders(opts) {
@@ -9353,7 +9432,7 @@ function showMulliganOverlay() {
       swapBtn.addEventListener('click', () => {
         const oldHand = p.hand.splice(0, p.hand.length);
         p.deck.push(...oldHand);
-        p.deck = shuffle(p.deck);
+        p.deck = shuffle(p.deck, rngPrivate('player'));
         drawCards('player', 4);
         p.mulliganUsed = true;
         logMsg('You mulliganed your hand.');
@@ -9388,7 +9467,7 @@ function aiMulligan() {
   if (handPower < avgPossible) {
     const oldHand = ai.hand.splice(0, ai.hand.length);
     ai.deck.push(...oldHand);
-    ai.deck = shuffle(ai.deck);
+    ai.deck = shuffle(ai.deck, rngPrivate('ai'));
     drawCards('ai', 4);
     ai.mulliganUsed = true;
     logMsg('Opponent mulliganed their hand.');
@@ -10181,7 +10260,7 @@ document.getElementById('devPickAddBtn').addEventListener('click', () => {
   closeLibraryModal();
   if (!id || !state || !CARD_DB[id]) return;
   const base = CARD_DB[id];
-  const card = { ...base, uid: `${id}_dev${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, basePower: base.power, owner: 'player' };
+  const card = { ...base, uid: nextCardUid('player'), basePower: base.power, owner: 'player' };
   const p = state.players.player;
   if (mode === 'hand') p.hand.push(card); else p.graveyard.push(card);
   logMsg(`Developer: added ${base.name} to ${mode === 'hand' ? 'hand' : 'discard pile'}.`);
@@ -10462,7 +10541,7 @@ function tutorialRedrawHand(side) {
     // From round 3 on the opponent plays with real AI logic, but still
     // against a small, tutorial-appropriate deck rather than a fully random
     // generated one.
-    state.players.ai.deck = shuffle(TUTORIAL_AI_ROUND3_DECK.map((id, i) => mkTutorialCard(id, `tut_ai_r3_deck_${i}_${id}`)));
+    state.players.ai.deck = shuffle(TUTORIAL_AI_ROUND3_DECK.map((id, i) => mkTutorialCard(id, `tut_ai_r3_deck_${i}_${id}`)), rngPrivate('ai'));
   }
   if (side === 'ai' && state.round <= 2) {
     // The AI's hand for rounds 1-2 is entirely scripted (see

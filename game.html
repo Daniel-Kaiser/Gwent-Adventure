@@ -7356,7 +7356,7 @@ function positionPreview(anchorEl) {
   previewEl.style.top = top + 'px';
 }
 function showPreview(card, anchorEl) {
-  if (drag) return; // never pop the inspector over a card being dragged
+  if (drag || deckDrag) return; // never pop the inspector over a card being dragged
   previewAnchor = anchorEl || null;
   positionPreview(anchorEl);
   previewEl.className = 'show' + (card.tier ? ' ' + card.tier : '');
@@ -9329,6 +9329,7 @@ function startDeckDrag(e, el, card, from) {
   if (e.button !== 0 && e.pointerType === 'mouse') return;
   if (!from && el.classList.contains('deckFull')) return;
   e.preventDefault();
+  hidePreview();
   deckDrag = { el, card, from, sx: e.clientX, sy: e.clientY, ghost: null };
 }
 function deckSlotAt(x, y) {
@@ -9357,6 +9358,7 @@ window.addEventListener('pointermove', (e) => {
 function endDeckDrag(e, cancel) {
   const d = deckDrag; if (!d) return;
   deckDrag = null;
+  hidePreview();
   deckBody.querySelectorAll('.deckSlot.slotOver').forEach(s => s.classList.remove('slotOver'));
   libraryModal.classList.remove('dropRemove');
   if (!d.ghost) return; // a plain click, no drag

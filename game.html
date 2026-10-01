@@ -2607,6 +2607,37 @@ const CARD_DB = {
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'larva_token', 1) } ] },
   // Passive: whenever you discard one of your other cards from play, this card is played from your discard pile.
   nekker:            { id: 'nekker', name: 'Nekker', power: 2, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/nekker.jpg', nekkerReturn: true, abilities: [] },
+  /* ---- Monsters of Velen silvers ---- */
+  // Play: discard one of your cards in play (itself included; mandatory -- if it's your only card it eats itself).
+  fiend:             { id: 'fiend', name: 'Fiend', power: 9, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/fiend.jpg', playScript: fiendPlay, abilities: [] },
+  // Play: create and play two Larva tokens. Order: discard one of your other cards; if you do, give another card in play +4.
+  monster_nest:      { id: 'monster_nest', name: 'Monster Nest', power: 2, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/monster_nest.jpg',
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'larva_token', 2) },
+                                    { trigger: 'order', needsTarget: false, orderScript: nestOrder, aiWants: aiWantsNest, validTargets: ownOtherCardsInPlay } ] },
+  // Play: discard one of your cards in play (mandatory). Order: play a Bronze card from your discard pile.
+  grave_hag:         { id: 'grave_hag', name: 'Grave Hag', power: 5, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/grave_hag.jpg', playScript: graveHagPlay,
+                       abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze', smartPick: true,
+                                      validTargets: (side) => state.players[side].graveyard.filter(c => c.tier === 'bronze' && isReviveEligibleBronze(c)) } ] },
+  // Play: create and play a Larva token. Passive: +1 power whenever you discard one of your other cards in play.
+  arachas_behemoth:  { id: 'arachas_behemoth', name: 'Arachas Behemoth', power: 4, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/arachas_behemoth.jpg', discardBuffSelf: true,
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'larva_token', 1) } ] },
+  // Play: each player chooses one of their cards in play; both are discarded.
+  archgriffin:       { id: 'archgriffin', name: 'Archgriffin', power: 6, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/archgriffin.jpg', playScript: archgriffinPlay, abilities: [] },
+  // Passive: the first time each turn you discard one of your other cards in play, create and play a Larva token.
+  she_troll_of_vergen: { id: 'she_troll_of_vergen', name: 'She-Troll of Vergen', power: 5, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/she_troll_of_vergen.jpg', trollLarva: true, abilities: [] },
+  // Play: discard one of your other cards in play; if you do, discard all highest-power cards in play. Order: create a Larva token.
+  toad_prince:       { id: 'toad_prince', name: 'Toad Prince', power: 2, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/toad_prince.jpg', playScript: toadPlay,
+                       abilities: [ { trigger: 'order', needsTarget: false, orderScript: toadOrder, aiWants: () => true } ] },
+  // Play & Order (may): discard one of your cards in play; if you do, create and play two Larva tokens.
+  brewess:           { id: 'brewess', name: 'Brewess', power: 5, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/brewess.jpg', playScript: brewessPlay,
+                       abilities: [ { trigger: 'order', needsTarget: false, orderScript: brewessOrder, aiWants: aiWantsBrewess, validTargets: ownCardsInPlay } ] },
+  // Play & Order (may): discard one of your other cards in play; if you do, give another card in play +3.
+  weavess:           { id: 'weavess', name: 'Weavess', power: 4, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/weavess.jpg', playScript: weavessPlay,
+                       abilities: [ { trigger: 'order', needsTarget: false, orderScript: weavessOrder, aiWants: aiWantsWeavess, validTargets: ownOtherCardsInPlay } ] },
+  // Play & Order (may): discard one of your other cards in play; if you do, move a card with 2 or less power to the other side.
+  whispess:          { id: 'whispess', name: 'Whispess', power: 3, tier: 'silver', faction: 'monsters_of_velen', img: 'cards/whispess.jpg', playScript: whispessPlay,
+                       abilities: [ { trigger: 'order', needsTarget: false, orderScript: whispessOrder, aiWants: aiWantsWhispess, validTargets: ownOtherCardsInPlay } ] },
+
   // Token (never in decks): 1 power, no abilities.
   larva_token:       { id: 'larva_token', name: 'Larva', power: 1, tier: 'token', faction: 'monsters_of_velen', img: 'cards/larva_token.jpg', abilities: [] },
 
@@ -5181,6 +5212,10 @@ function onCardDiscardedFromPlay(card, boardSide, discarderSide) {
     refreshOrder(c);
     logMsg(`${who} ${c.name}'s Order is refreshed.`);
   });
+  p.board.filter(c => c.trollLarva && c.uid !== card.uid && c._trollTurn !== state.turnCounter).forEach(c => {
+    c._trollTurn = state.turnCounter; // only the first own discard each turn
+    queueFollowup({ type: 'larvae', side: D, uid: c.uid, n: 1 });
+  });
   if (card.discardSelfTokens) queueFollowup({ type: 'larvae', side: D, uid: card.uid, n: card.discardSelfTokens });
   if (card.discardSelfPlayBronze) queueFollowup({ type: 'egg', side: D });
   p.graveyard.filter(g => g.nekkerReturn && g.uid !== card.uid).forEach(g => queueFollowup({ type: 'nekker', side: D, uid: g.uid }));
@@ -5273,7 +5308,7 @@ function ownOtherCardsInPlay(side, card) {
 // null (nothing to pick, or a skippable pick that was cancelled).
 function pickOwnCardInPlay(side, source, opts) {
   opts = opts || {};
-  const cands = state.players[side].board.filter(c => !c.floatingSpecial && c.uid !== opts.excludeUid);
+  const cands = opts.cands || state.players[side].board.filter(c => !c.floatingSpecial && c.uid !== opts.excludeUid);
   if (cands.length === 0) return Promise.resolve(null);
   if (side === 'ai') return Promise.resolve(opts.aiPick ? opts.aiPick(cands) : cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0]);
   const uids = new Set(cands.map(c => c.uid));
@@ -5300,7 +5335,7 @@ function aiKeepValue(c) {
   let v = c.power;
   const a = findOrderAbility(c);
   if (a && !c.orderUsed) v += 2;
-  if (c.discardBuffSelf || c.refreshOnOwnDiscard) v += 1.5;
+  if (c.discardBuffSelf || c.refreshOnOwnDiscard || c.trollLarva) v += 1.5;
   if (c.discardSelfTokens) v -= 2 * c.discardSelfTokens * 0.5 + 0.5;
   if (c.discardSelfPlayBronze && state.players.ai.graveyard.some(g => g.tier === 'bronze' && !g.special && g.id !== 'monster_egg')) v -= 2;
   if (c.tier === 'token') v -= 0.5;
@@ -5313,7 +5348,7 @@ function aiBestSacrifice(excludeUid) {
 // Bonus the AI sees in discarding one of its own cards (Drone / Endrega refresh / Nekker / Egg ...).
 function aiDiscardSynergy() {
   const ai = state.players.ai;
-  let v = ai.board.filter(c => c.discardBuffSelf).length;
+  let v = ai.board.filter(c => c.discardBuffSelf).length + ai.board.filter(c => c.trollLarva && c._trollTurn !== state.turnCounter).length;
   v += ai.board.filter(c => c.refreshOnOwnDiscard && c.orderUsed).length * 2;
   v += ai.graveyard.filter(c => c.nekkerReturn).length * 2;
   return v;
@@ -5327,6 +5362,18 @@ function aiScriptCardValue(c) {
   if (c.id === 'harpy' || c.id === 'monster_egg' || c.id === 'arachas_drone') return 1;
   if (c.id === 'archespore') return 2;
   if (c.id === 'cyclops') { const sac = aiBestSacrifice(c.uid), t = aiBestKillTarget(3); return sac && t ? Math.max(0, t.power - aiKeepValue(sac)) : 0; }
+  if (c.id === 'fiend' || c.id === 'grave_hag') {
+    const sac = aiBestSacrifice(c.uid);
+    const base = sac ? aiDiscardSynergy() - aiKeepValue(sac) : -c.power; // alone: it eats itself
+    return base + (c.id === 'grave_hag' && state.players.ai.graveyard.some(g => g.tier === 'bronze' && !g.special) ? 2 : 0);
+  }
+  if (c.id === 'archgriffin') {
+    const mine = state.players.ai.board.filter(x => !x.floatingSpecial), theirs = state.players.player.board.filter(x => !x.floatingSpecial);
+    if (!mine.length || !theirs.length) return -(mine.length ? Math.min(...mine.map(aiKeepValue)) : 0);
+    return Math.min(...theirs.map(x => Math.max(0, x.power))) + aiDiscardSynergy() - Math.min(...mine.map(aiKeepValue));
+  }
+  if (c.id === 'brewess') return aiWantsBrewess(c) ? 1 : 0;
+  if (c.id === 'monster_nest' || c.id === 'arachas_behemoth' || c.id === 'toad_prince') return c.id === 'monster_nest' ? 2 : 1;
   if (c.id === 'ghoul') { const sac = aiBestSacrifice(c.uid); return sac && aiKeepValue(sac) < 2 ? 1 : 0; }
   return 0;
 }
@@ -5430,6 +5477,188 @@ function aiWantsRotfiend(card) {
   const myCost = Math.min(...mine.map(aiKeepValue));
   const theirLoss = Math.min(...theirs.map(c => Math.max(0, c.power))); // the human will give up their cheapest card
   return theirLoss + aiDiscardSynergy() - myCost >= 1;
+}
+
+/* ---- Monsters of Velen silvers: shared pieces ---- */
+function ownCardsInPlay(side) { return state.players[side].board.filter(c => !c.floatingSpecial); }
+// "Discard one of your cards in play" with the pick UX. o.includeSelf: the
+// source card may be chosen; o.mandatory: no skipping (if the only candidate
+// is the source itself it is eaten without asking); o.aiPick(cands).
+// Resolves with the eaten card, or null if nothing was eaten.
+async function eatOwnChoice(side, card, o) {
+  o = o || {};
+  const cands = state.players[side].board.filter(c => !c.floatingSpecial && (o.includeSelf || c.uid !== card.uid));
+  if (cands.length === 0) return null;
+  let sac;
+  if (o.mandatory && cands.length === 1 && cands[0].uid === card.uid) sac = cands[0];
+  else if (side === 'ai') sac = o.aiPick ? o.aiPick(cands) : cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0];
+  else sac = await pickOwnCardInPlay('player', card, { cands, mandatory: !!o.mandatory,
+    banner: o.mandatory ? 'Pick a card to be discarded' : 'Pick a card to discard (click away to skip)' });
+  if (!sac || !state || state.phase !== 'playing') return null;
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} ${sac.uid === card.uid ? 'devours itself' : 'devours ' + sac.name}.`);
+  await eatCardsFromPlay([sac], side);
+  render();
+  await delay(200);
+  return sac;
+}
+// Give `amt` power to another card in play (either side; mandatory once the discard happened).
+async function giveBuffChoice(side, source, amt) {
+  const live = state.players[side].board.find(c => c.uid === source.uid) || source;
+  const all = [...state.players.player.board, ...state.players.ai.board].filter(c => !c.floatingSpecial && c.uid !== source.uid);
+  if (all.length === 0 || !state || state.phase !== 'playing') return null;
+  let t;
+  if (side === 'ai') {
+    const mine = all.filter(c => state.players.ai.board.some(x => x.uid === c.uid));
+    t = mine.slice().sort((a, b) => ((findOrderAbility(b) && !b.orderUsed ? 1 : 0) - (findOrderAbility(a) && !a.orderUsed ? 1 : 0)) || b.power - a.power)[0];
+    if (!t) return null;
+  } else {
+    t = await pickOwnCardInPlay('player', live, { cands: all, mandatory: true, banner: `Pick a card to give +${amt}` });
+  }
+  if (!t) return null;
+  await new Promise(res => shootProjectile(live.uid, t.uid, () => {
+    applyPowerDelta(t, amt, { side, card: live });
+    SFX.buff();
+    logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${live.name} gives ${t.name} +${amt}.`);
+    render();
+    res();
+  }, 'buff'));
+  await delay(250);
+  return t;
+}
+async function larvaePlay(side, card, n) {
+  if (!state || state.phase !== 'playing') return;
+  createTokensRightOf(side, card, 'larva_token', n);
+  render();
+  await delay(250);
+}
+
+// Fiend / Grave Hag: mandatory self-or-other discard.
+async function fiendPlay(side, card) {
+  await eatOwnChoice(side, card, { includeSelf: true, mandatory: true,
+    aiPick: cands => cands.slice().sort((a, b) => (aiKeepValue(a) + (a.uid === card.uid ? 100 : 0)) - (aiKeepValue(b) + (b.uid === card.uid ? 100 : 0)))[0] });
+}
+function graveHagPlay(side, card) { return fiendPlay(side, card); }
+
+// Archgriffin: like Rotfiend's Order, but as a Play (she is already in play and may be chosen by her owner).
+async function archgriffinPlay(side, card) {
+  const opp = otherSide(side);
+  const picks = {};
+  for (const s of [side, opp]) {
+    picks[s] = await pickOwnCardInPlay(s, card, { mandatory: true, banner: 'Pick a card to be discarded',
+      aiPick: cands => cands.slice().sort((a, b) => (aiKeepValue(a) + (a.uid === card.uid ? 100 : 0)) - (aiKeepValue(b) + (b.uid === card.uid ? 100 : 0)))[0] });
+    if (s === 'ai') await delay(400);
+  }
+  const chosen = [picks[side], picks[opp]].filter(Boolean);
+  if (chosen.length === 0) return;
+  logMsg(`${card.name}: ${chosen.map(c => c.name).join(' and ')} ${chosen.length > 1 ? 'are' : 'is'} discarded.`);
+  await eatCardsFromPlay(chosen, side);
+  render();
+  await delay(200);
+}
+
+// Toad Prince: AI plan = which own card to eat so the highest-power discard nets the most.
+function aiToadPlan(card) {
+  const ai = state.players.ai, me = state.players.player;
+  const others = ai.board.filter(c => !c.floatingSpecial && c.uid !== card.uid);
+  if (others.length === 0) return null;
+  let best = null;
+  others.forEach(sac => {
+    const pool = [...me.board.map(c => ({ c, own: false })), ...ai.board.filter(c => c.uid !== sac.uid && c.uid !== card.uid).map(c => ({ c, own: true })), { c: card, own: true }]
+      .filter(x => x.c.power > 0 && !x.c.floatingSpecial);
+    const max = Math.max(...pool.map(x => x.c.power));
+    const hit = pool.filter(x => x.c.power === max);
+    const enemy = hit.filter(x => !x.own).reduce((t, x) => t + x.c.power, 0);
+    const own = hit.filter(x => x.own).reduce((t, x) => t + x.c.power, 0) + aiKeepValue(sac) - aiDiscardSynergy();
+    const plan = { sac, enemy, own, net: enemy - own };
+    if (!best || plan.net > best.net) best = plan;
+  });
+  return best;
+}
+async function toadPlay(side, card) {
+  const sac = await eatOwnChoice(side, card, { mandatory: true,
+    aiPick: cands => { const pl = aiToadPlan(card); return pl ? pl.sac : cands[0]; } });
+  if (!sac || !state || state.phase !== 'playing') return;
+  const targets = highestCardsInPlay();
+  if (targets.length === 0) return;
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} discards ${targets.map(t => t.name).join(', ')} (${targets[0].power} power).`);
+  await new Promise(res => burnCardsInPlay(targets, res, side));
+  render();
+  await delay(300);
+}
+async function toadOrder(side, card, markUsed) {
+  markUsed();
+  await larvaePlay(side, card, 1);
+}
+
+// Brewess: may discard one of your cards (itself included); if you do, two Larvae.
+async function brewessEat(side, card, markUsed) {
+  const sac = await eatOwnChoice(side, card, { includeSelf: true,
+    aiPick: cands => cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0] });
+  if (!sac) return false;
+  if (markUsed) markUsed();
+  await larvaePlay(side, card, 2);
+  return true;
+}
+function brewessPlay(side, card) { return brewessEat(side, card, null); }
+function brewessOrder(side, card, markUsed) { return brewessEat(side, card, markUsed); }
+function aiWantsBrewess(card) {
+  const s = aiBestSacrifice(null);
+  return !!s && aiKeepValue(s) - aiDiscardSynergy() < 1.5;
+}
+
+// Weavess / Monster Nest: may discard one of your other cards; if you do, give another card +3 / +4.
+async function buffEat(side, card, markUsed, amt) {
+  const sac = await eatOwnChoice(side, card, { aiPick: cands => cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0] });
+  if (!sac) return false;
+  if (markUsed) markUsed();
+  await giveBuffChoice(side, card, amt);
+  return true;
+}
+function weavessPlay(side, card) { return buffEat(side, card, null, 3); }
+function weavessOrder(side, card, markUsed) { return buffEat(side, card, markUsed, 3); }
+function nestOrder(side, card, markUsed) { return buffEat(side, card, markUsed, 4); }
+function aiBuffEatWanted(card, amt) {
+  const others = ownOtherCardsInPlay('ai', card);
+  if (others.length < 2) return false; // need a victim and a different card to buff
+  const s = aiBestSacrifice(card.uid);
+  return !!s && aiKeepValue(s) - aiDiscardSynergy() < amt - 0.5;
+}
+function aiWantsWeavess(card) { return aiBuffEatWanted(card, 3); }
+function aiWantsNest(card) { return aiBuffEatWanted(card, 4); }
+
+// Whispess: may discard one of your other cards; if you do, move a card with 2 or less power to the other side.
+function whispessTargets(card) {
+  return [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial && c.power <= 2);
+}
+function aiWhispessTarget(card) {
+  const t = whispessTargets(card).filter(c => findCardOwnerSide(c.uid) === 'player' && c.power >= 1);
+  const score = c => c.power + (findOrderAbility(c) && !c.orderUsed ? 3 : 0);
+  return t.slice().sort((a, b) => score(b) - score(a))[0] || null;
+}
+async function whispessEat(side, card, markUsed) {
+  if (side === 'ai') { // decide before eating: only worth it with an opposing card to steal
+    const t = aiWhispessTarget(card), s = aiBestSacrifice(card.uid);
+    if (!t || !s || aiKeepValue(s) - aiDiscardSynergy() >= t.power * 1.5 + 0.5) return false;
+  }
+  const sac = await eatOwnChoice(side, card, { aiPick: cands => cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0] });
+  if (!sac) return false;
+  if (markUsed) markUsed();
+  const live = state.players[side].board.find(c => c.uid === card.uid) || card;
+  const targets = whispessTargets(live);
+  if (targets.length === 0) { logMsg(`${card.name} finds no card with 2 or less power to move.`); return true; }
+  let t;
+  if (side === 'ai') t = aiWhispessTarget(live);
+  else t = await pickOwnCardInPlay('player', live, { cands: targets, mandatory: true, banner: 'Pick a card with 2 or less power to move to the other side' });
+  if (!t) return true;
+  await new Promise(res => moveCardToOtherSide(t, res));
+  await delay(200);
+  return true;
+}
+function whispessPlay(side, card) { return whispessEat(side, card, null); }
+function whispessOrder(side, card, markUsed) { return whispessEat(side, card, markUsed); }
+function aiWantsWhispess(card) {
+  const t = aiWhispessTarget(card), s = aiBestSacrifice(card.uid);
+  return !!t && !!s && aiKeepValue(s) - aiDiscardSynergy() < t.power * 1.5 + 0.5;
 }
 
 /* "Passive: whenever you play a Gold card, this card gets played from your
@@ -7063,10 +7292,11 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
    { enemy, own } -- the total power the player / the AI would lose -- or
    null if the card isn't Scorch-like right now. */
 function aiIsScorchLike(card) {
-  return card.id === 'scorch' || card.id === 'villentretenmerth' || card.id === 'saesenthessis' || card.id === 'coral' || dethmoldDiscardActive('ai', card);
+  return card.id === 'scorch' || card.id === 'villentretenmerth' || card.id === 'saesenthessis' || card.id === 'coral' || dethmoldDiscardActive('ai', card) || (card.id === 'toad_prince' && state.players.ai.board.some(c => !c.floatingSpecial && c.uid !== card.uid));
 }
 function aiScorchOutcome(card, assumeActive) {
   if (!assumeActive && !aiIsScorchLike(card)) return null;
+  if (card.id === 'toad_prince') { const pl = aiToadPlan(card); return pl ? { enemy: pl.enemy, own: pl.own } : { enemy: 0, own: 0 }; }
   const all = [...state.players.player.board.map(c => ({ c, own: false })),
                ...state.players.ai.board.map(c => ({ c, own: true }))];
   let pool;

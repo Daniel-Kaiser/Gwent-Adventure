@@ -1869,7 +1869,12 @@
   .pvpCopyRow .pvpCodeBox { flex: 1 1 200px; }
   .gwDlg input.pvpCodeBox.roomCode { font: 700 26px/1.2 'Consolas', 'Courier New', monospace; letter-spacing: 6px; text-align: center; text-transform: uppercase; }
   .gwDlg textarea.pvpCodeBox.multi { min-height: 90px; font: 11px/1.3 'Consolas', 'Courier New', monospace; word-break: break-all; width: 100%; }
-  .pvpSpinner { width: 26px; height: 26px; margin: 4px auto 0; border-radius: 50%; border: 3px solid var(--accent-dim); border-top-color: var(--accent); animation: pvpSpin 1s linear infinite; }
+  /* the ring spins inside a fixed, clipped box: its rotation can never change the popup's size */
+  .pvpSpinnerWrap { flex: none; width: 36px; height: 36px; margin: 2px auto 0; overflow: hidden; contain: strict; display: flex; align-items: center; justify-content: center; }
+  .pvpSpinner { box-sizing: border-box; width: 26px; height: 26px; border-radius: 50%; border: 3px solid var(--accent-dim); border-top-color: var(--accent); animation: pvpSpin 1s linear infinite; will-change: transform; }
+  /* PvP popups: a bit wider, sized to their content (scrolling only as a last resort on tiny windows) */
+  .gwDlg.pvpDlg { width: 520px; }
+  .gwDlg.pvpDlg .gwDlgBody { overflow-x: hidden; overflow-y: auto; padding: 2px; }
   @keyframes pvpSpin { to { transform: rotate(360deg); } }
   #pvpWaitBanner { position: fixed; left: 50%; top: 10px; transform: translateX(-50%); z-index: 1300; display: none; pointer-events: none;
     padding: 6px 16px; border-radius: 16px; background: #000b; color: var(--text); font-size: 14px; letter-spacing: .3px; box-shadow: 0 4px 14px #0008; }
@@ -3998,7 +4003,7 @@ function pvpMaybeStart() {
 function pvpShowWaiting(text) {
   pvpCloseDialogs();
   const p = document.createElement('p'); p.id = 'pvpWaitingText'; p.textContent = text;
-  const dlg = gwDialog({ title: 'Challenge a Friend', body: p, buttons: [{ label: 'Leave', secondary: true, onClick: () => { pvpQuit(); } }],
+  const dlg = gwDialog({ cls: 'pvpDlg', title: 'Challenge a Friend', body: p, buttons: [{ label: 'Leave', secondary: true, onClick: () => { pvpQuit(); } }],
                          onClose: () => { if (!dlg.programmatic && pvp && !state) pvpQuit(); } });
 }
 
@@ -4395,6 +4400,7 @@ function openChallengeFriend() {
   }
   body.append(nameRow, intro, hostBtn, joinBtn, links);
   const dlg = gwDialog({ title: 'Challenge a Friend', body, buttons: [] });
+  dlg.box.classList.add('pvpDlg');
   const go = (fn) => (e) => { if (e) e.preventDefault(); pvpSaveName(nameInp.value); dlg.programmatic = true; dlg.close(); fn(); };
   hostBtn.addEventListener('click', go(() => openPvpHost('online')));
   joinBtn.addEventListener('click', go(() => openPvpJoin('online')));
@@ -4406,7 +4412,7 @@ function openChallengeFriend() {
 function openPvpLocalChooser() {
   const body = document.createElement('div'); body.className = 'pvpBody';
   body.appendChild(pvpStatusLine('Developer test: play both sides yourself in two tabs of this browser. Host in one tab, then join with the code in the other.'));
-  gwDialog({ title: 'Local test (two tabs)', body, buttons: [
+  gwDialog({ cls: 'pvpDlg', title: 'Local test (two tabs)', body, buttons: [
     { label: 'Join', id: 'pvpLocalJoinBtn', secondary: true, onClick: () => { openPvpJoin('local'); } },
     { label: 'Host', id: 'pvpLocalHostBtn', onClick: () => { openPvpHost('local'); } },
   ] });
@@ -4416,6 +4422,7 @@ function openPvpLocalChooser() {
 function pvpConnDialog(title, body, extraButtons) {
   const dlg = gwDialog({ title, body, buttons: (extraButtons || []).concat([{ label: 'Cancel', secondary: true, id: 'pvpCancelBtn' }]),
     onClose: () => { if (!dlg.programmatic && pvp && !state) pvpTeardown(true); } });
+  dlg.box.classList.add('pvpDlg');
   return dlg;
 }
 async function openPvpHost(mode) {
@@ -4442,7 +4449,9 @@ async function openPvpHost(mode) {
     body.appendChild(cb.wrap);
     body.appendChild(pvpStatusLine(mode === 'local' ? 'Open the game in another tab, choose Local test → Join and enter this code.' :
       'Send this code to your friend. Waiting for them to join…'));
-    const spin = document.createElement('div'); spin.className = 'pvpSpinner'; body.appendChild(spin);
+    const wrap = document.createElement('div'); wrap.className = 'pvpSpinnerWrap';
+    const spin = document.createElement('div'); spin.className = 'pvpSpinner';
+    wrap.appendChild(spin); body.appendChild(wrap);
   } catch (e) {
     status.textContent = e.message || String(e);
     status.classList.add('gwErr');
@@ -4493,7 +4502,7 @@ function openPvpJoin(mode) {
 function openPvpManual() {
   const body = document.createElement('div'); body.className = 'pvpBody';
   body.appendChild(pvpStatusLine('No matchmaking service needed: you exchange two codes with your friend (e.g. in a chat). One of you hosts, the other joins.'));
-  gwDialog({ title: 'Manual connection', body, buttons: [
+  gwDialog({ cls: 'pvpDlg', title: 'Manual connection', body, buttons: [
     { label: 'I am joining', id: 'pvpManualJoinBtn', secondary: true, onClick: () => { openPvpManualJoin(); } },
     { label: 'I am hosting', id: 'pvpManualHostBtn', onClick: () => { openPvpManualHost(); } },
   ] });
@@ -11395,7 +11404,7 @@ document.getElementById('titleDeckBtn').addEventListener('click', () => {
 const gwDlgStack = [];
 function gwDialog(opts) {
   const ov = document.createElement('div'); ov.className = 'gwDlgOverlay';
-  const box = document.createElement('div'); box.className = 'gwDlg' + (opts.wide ? ' wide' : '');
+  const box = document.createElement('div'); box.className = 'gwDlg' + (opts.wide ? ' wide' : '') + (opts.cls ? ' ' + opts.cls : '');
   const x = document.createElement('button'); x.className = 'modalCloseBtn'; x.type = 'button'; x.setAttribute('aria-label', 'Close'); x.innerHTML = '&times;';
   const h = document.createElement('h2'); h.textContent = opts.title || '';
   const body = document.createElement('div'); body.className = 'gwDlgBody';

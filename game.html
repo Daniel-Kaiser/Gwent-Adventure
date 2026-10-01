@@ -1263,6 +1263,9 @@
   #cardPreview.gold, #cardPreview.silver, #cardPreview.bronze { border: none; }
 
   /* ---- Title screen ---- */
+  .unofficialNote { position: fixed; top: 10px; right: 16px; z-index: 5; pointer-events: none; user-select: none; -webkit-user-select: none;
+    font: 500 12px/1.2 'Cinzel', Georgia, serif; letter-spacing: .04em; color: rgba(236, 214, 160, .55); text-shadow: 0 1px 3px #000a; }
+  #titleScreen .unofficialNote { position: absolute; z-index: 1; color: rgba(246, 228, 180, .8); text-shadow: 0 1px 4px #000; }
   #titleScreen {
     position: fixed;
     inset: 0;
@@ -1883,6 +1886,7 @@
 <body>
 
 <div id="titleScreen">
+  <div class="unofficialNote">Not official CD Project RED product</div>
   <div id="titleButtons">
     <button id="titleNewGameBtn">New Game</button>
     <button id="titleTutorialBtn" class="titleSecondaryBtn">Tutorial</button>
@@ -2046,6 +2050,7 @@
   </div>
 </div>
 
+<div class="unofficialNote">Not official CD Project RED product</div>
 <div id="hamburgerWrap">
   <button id="hamburgerBtn" title="Menu"><span></span><span></span><span></span></button>
   <div id="hamburgerMenu">

@@ -1,15 +1,58 @@
-# Multiplayer preparation (step 1 of PvP)
+# Multiplayer (Challenge a Friend)
 
-Status: **step 1 done. No networking yet, and gameplay is unchanged.** `game.html` is now structured so
-that a later step can add peer-to-peer PvP (WebRTC, two browsers, no server).
-In that design each browser keeps its own hand and draw pile private. Both clients run the same
-rules engine on the shared public state, and only the acting player's decisions go over the wire.
+Status: **step 2 done. "Challenge a Friend" can be played.** Two browsers connect peer-to-peer over
+WebRTC. There is no game server and nothing costs money to run.
 
-This document describes:
+* Each browser keeps its own hand and draw pile private.
+* Both clients run the same rules engine on the shared public state.
+* Only the acting player's decisions travel over the wire, and hidden card identities never do until
+  the card is revealed.
 
-* the architecture introduced in step 1
-* the contracts that step 2 must keep
-* the open risks
+Single player (Quick Game vs AI, tutorial, deck builder) is unchanged and still works offline. The
+connection library (PeerJS) is loaded from a CDN only when a player hosts or joins with a room code.
+
+---
+
+## How to play with a friend
+
+1. Both players need **exactly the same game file**. If the two copies differ in any way (even one
+   balance change), the game refuses to connect with "Different game versions".
+2. Main menu → **New Game** → **Challenge a Friend**. Enter your name (it is remembered).
+3. One player clicks **Host a game** and gets a 6-character room code, e.g. `8A4NA5`. The code is
+   shown in a text box with a **Copy** button. If copying is blocked (some iframes), select the text
+   and press Ctrl+C.
+4. The other player clicks **Join a game**, types the code and clicks **Join**.
+5. Both players pick a deck in the usual *Select deck* popup. Randomized is allowed; incomplete decks
+   cannot be picked. The match starts once both have chosen.
+6. In game:
+   * The friend's hand is shown as card backs only. Their draw pile is just a count.
+   * A small banner at the top says when the friend is thinking or choosing.
+   * Their played cards fly in from their hand and flip face up.
+7. The menu (☰) has **Concede**. At the end both players see **Rematch**, which needs both to accept
+   and reuses the same deck choices, and **Main Menu**.
+8. **If room codes do not work**, use **Advanced: connect with manual codes**:
+   * The cause may be that the matchmaking service is unreachable, or that a firewall blocks it.
+   * The host sends an invite code. The joining player pastes it and sends back a reply code. The
+     host pastes that and clicks **Connect**.
+   * The codes are longer (about 600 characters) but need no third-party service.
+9. **If you cannot connect at all**, one of you is probably behind a strict NAT (some mobile or
+   corporate networks). That needs a TURN relay server. Add one in `PVP_TURN_SERVERS` near the top of
+   the *PVP* section of `game.html`.
+
+It works when opened as a local `file://`; all tests ran that way. It is built to work inside an
+iframe (itch.io) as well, but that has not been tried yet.
+
+## Testing alone with two tabs
+
+1. Settings → **Developer mode** on.
+2. New Game → Challenge a Friend → **Local test (two tabs)** → **Host**. Note the 4-letter code.
+3. Open the same `game.html` in a **second tab of the same browser** and turn Developer mode on there
+   too.
+4. In the second tab: Local test → **Join** → enter the code.
+5. Play both sides by switching tabs.
+
+This uses a `BroadcastChannel` inside the browser, so no network is involved. It only exists for
+testing and appears only in Developer mode.
 
 ---
 
@@ -17,259 +60,278 @@ This document describes:
 
 The engine always reasons from the point of view of the **local browser**:
 
-| seat       | meaning in single player | meaning in PvP (step 2)          |
+| seat       | single player            | PvP                               |
 |------------|--------------------------|-----------------------------------|
 | `'player'` | you (bottom of screen)   | you (bottom of screen)            |
-| `'ai'`     | the AI opponent          | the remote human (top of screen)  |
+| `'ai'`     | the AI opponent          | your friend (top of screen)       |
 
-Each client sees itself as `'player'`. A seat named `'ai'` in the code means
-"the opponent seat"; it does not mean the opponent is an AI.
+Each client sees itself as `'player'`. A seat named `'ai'` means "the opponent seat"; it does not mean
+the opponent is an AI. For anything both clients must agree on, `state.pvpSeats` maps the two seats to
+the canonical roles **`h`** (host) and **`g`** (guest).
 
-Every seat has a **controller** (`controllers[side]`, defined in the
-*CONTROLLERS & ACTIONS* section of `game.html`):
+Every seat has a **controller** (`controllers[side]`):
 
 | controller             | `kind`   | `interactive` | how it decides |
 |------------------------|----------|---------------|----------------|
 | `LocalHumanController` | `local`  | yes | The UI renders requests from engine state (targeting session, picker modals, mulligan overlay). Mouse and keyboard input becomes actions through `submitAction`. |
-| `AIController`         | `ai`     | no  | Autonomous. `onTurnStart` runs `aiTakeTurn()` and `mulligan` runs `aiMulligan()`. In-flow choices are made by the AI policy in the engine's non-interactive branches. |
-| `makeRemoteController(transport)` | `remote` | yes | **Stub for step 2.** Receives `onRequest(side, request)` and forwards it to the transport. Actions from the peer are fed to `submitAction(side, action)`. |
-| `makeBotController(side, seed)`   | `bot`    | yes | Test only (dev hook). Answers every request with seeded random choices through `submitAction`. |
+| `AIController`         | `ai`     | no  | Autonomous: `aiTakeTurn()` / `aiMulligan()`. In-flow choices come from the AI policy in the engine's non-interactive branches. **Never installed in PvP** (`aiTakeTurn`/`aiMulligan` also refuse to run there). |
+| `makeRemoteController(pvp)` | `remote` | yes | PvP opponent seat. Requests produce no local UI; the friend's actions arrive over the network and are applied by `pvpPump`. |
+| `makeBotController(side, seed)` | `bot` | yes | Tests only. Seeded random choices through `submitAction`. |
 
-The engine never asks "is this the human?". It asks `isInteractive(side)`:
+The engine asks `isInteractive(side)`, never "is this the human?". `isLocalSide(side)` only decides
+presentation: banners, highlights, picker modals and click handlers.
 
-* **Interactive sides** get *requests* (a targeting session, a discard or deck pick, the mulligan). The
-  engine then waits for an answering action.
-* **Non-interactive sides** (the AI) compute the choice inline in the engine branch guarded by
-  `!isInteractive(side)`.
+### Request types
 
-In PvP both seats are interactive, so the AI branches are never reached.
+All requests are plain JSON (`notifyRequest(side, request)`):
 
-`isLocalSide(side)` only decides **presentation**:
-
-* whether the targeting noodle, banners and highlights are shown
-* whether picker modals open
-* whether click handlers are attached
-
-Requests for a non-local interactive seat produce no local UI. That seat's controller gets
-`onRequest(...)` instead.
-
-### Controller interface
-
-```js
-{
-  kind: 'local' | 'ai' | 'remote' | 'bot',
-  interactive: boolean,
-  autoEndTurn?(): boolean,          // interactive only: may the engine auto-end this side's turn?
-  onTurnStart?(side): void,         // called ~900 ms after the side's turn starts (scheduleTurnStart)
-  onRequest?(side, request): void,  // a decision is needed (see request types)
-  mulligan?(side): void,            // non-interactive only: take the mulligan decision now
-}
-```
-
-### Request types (`notifyRequest(side, request)`)
-
-All requests are plain JSON:
-
-* `{ type: 'mulligan' }`: decide on the opening hand. Answer with `mulligan` (optional, once) and then
-  `mulliganDone`.
-* `{ type: 'target', kind, source, candidates: [uid], selected: [uid], max, mandatory, amount }`
-  * `kind` is the targeting session kind:
-    * single picks: `order`, `playDamage`, `playDebuff`, `playRefresh`, `playMove`, `reactionBuff`, `specialDamage`
-    * sequential picks: `playDamageSeq`, `playBuffSeq`
-    * multi-selects: `playBuffMulti`, `orderMulti`, `pickMulti`
-    * own-card pick: `pickOwn`
-  * Answer with `target` (repeated for multi-selects, where it toggles), `finish` or `cancel`.
-* `{ type: 'pick', zone: 'discard' | 'deck', pile: side, candidates: [uid], hint }`: a discard or deck
-  picker. The discard picker is used by Yennefer, Caretaker, Sigrdrifa, King Bran, Grave Hag,
-  Monster Egg and Whispering Hillock; the deck picker by Dandelion. Answer with
-  `pick` (`uid: null` = skip).
-* Turn-level decisions (play, order, end turn, pass) are not separate requests. When it is a side's
-  turn and the engine is idle, that side may submit one of them. `onTurnStart` is the hint.
+* `{ type: 'mulligan' }`: answer with `mulligan` (optional, once) and then `mulliganDone`.
+* `{ type: 'target', kind, source, candidates, selected, max, mandatory, amount }`
+  * `kind` is one of: `order`, `playDamage`, `playDebuff`, `playRefresh`, `playMove`,
+    `reactionBuff`, `specialDamage`, `playDamageSeq`, `playBuffSeq`, `playBuffMulti`,
+    `orderMulti`, `pickMulti`, `pickOwn`.
+  * Answer with `target` (toggles in multi-selects), `finish` or `cancel`.
+* `{ type: 'pick', zone: 'discard' | 'deck', pile, candidates, hint }`: answer with `pick`
+  (`uid: null` = skip).
+* **"Each player chooses" (Rotfiend, Archgriffin)**: in PvP both players choose **at the same time**
+  (`pickOwnBoth`).
+  * The local seat uses the normal pick UI.
+  * The remote seat gets a parallel board-pick request (`pendingBoardPick`), answered by its `target`
+    action.
+  * Both players see "Pick a card to be discarded", and the effect resolves once both have chosen.
+  * Single player keeps the old order: the active player first, then the AI.
 
 ## 2. Actions
 
-Every decision of an interactive side is a plain JSON action. It enters the engine through **one** path:
+Every decision is a plain JSON action. There is one entry path:
 
 ```
-submitAction(side, action)  ->  validateAction(side, action)  ->  recordAction(...)  ->  applyAction(side, action)
+submitAction(side, action) -> validateAction -> recordAction -> applyAction
 ```
 
 | action | fields | meaning |
 |---|---|---|
-| `play`        | `uid`, `index` (board slot or `null` = rightmost) | play a hand card |
+| `play`        | `uid`, `index` | play a hand card (`index` = board slot or `null`) |
 | `order`       | `uid` | activate a ready Order |
-| `endTurn`     | | end the turn (the end-of-turn draw happens automatically) |
+| `endTurn`     | | end the turn (the draw happens automatically) |
 | `pass`        | | pass the round |
-| `mulligan`    | | swap the whole opening hand (once) |
+| `mulligan`    | | swap the opening hand (once) |
 | `mulliganDone`| | keep the hand / finished |
-| `target`      | `uid` | answer the open targeting request; toggles in multi-selects |
-| `finish`      | | "Done" on a multi-select (`pickMulti`) |
-| `cancel`      | | back out or finish early. The engine decides per kind (`applyTargetingCancel`). |
-| `pick`        | `uid` or `null` | answer the open discard or deck pick |
+| `target`      | `uid` | answer a targeting request or a board pick |
+| `finish`      | | "Done" on a multi-select |
+| `cancel`      | | back out / finish early (`applyTargetingCancel`) |
+| `pick`        | `uid`, `null` or `'?'` | answer a discard/deck pick; `'?'` = a card in a deck this client cannot see |
 
-Details:
+PvP routing:
 
-* `validateAction` rejects anything illegal right now (wrong turn, wrong side, card not a candidate, not
-  plain JSON, and so on) before it touches state. **Remote input must always go through it.**
-* Confirmation dialogs ("cancel this ability?") and gating such as the tutorial or hold-to-pass are
-  **local UI**. Only the final decision becomes an action.
-* `state.actionLog` records every applied action, plus the AI's turn-level decisions (`by: 'ai'`), as
-  `{ n, side, by, turn, ...action }`.
+* **My actions.** `submitAction('player', a)` goes to `pvpSubmitLocal`, which validates, sends
+  `{ t: 'act', a }` and applies locally.
+  * A `play` carries `reveal: { id }`, the identity of the card being played, which becomes public at
+    that moment.
+  * A pick inside my own deck (Dandelion) is sent as `'?'`.
+* **The friend's actions** are queued, then applied by `pvpPump`, in order, once
+  `validateAction('ai', a)` accepts them.
+* **Both directions** apply an action only when `pvpReadyFor(a)` holds: no kill animation pending, no
+  card or projectile in flight, and, for turn-level actions, no reactions, follow-ups, token spawns
+  or end-turn draw in progress. Both clients therefore apply every action at the same logical point.
+  * My own action that comes in early (for example a click during an animation) is held in
+    `pvp.localQueue` and committed a moment later.
+* A friend's action that stays invalid for 25 s while nothing local is gating it means the games
+  diverged; the "Out of sync" popup is shown.
+* Local gates are the round-end Continue overlay and the mulligan overlay. Actions that arrive while
+  one is open simply wait in the queue.
 
 ## 3. Determinism
 
-All randomness that affects game state goes through seeded streams (sfc32 seeded by xmur3):
+Randomness that affects game state uses seeded streams (sfc32 seeded by xmur3):
 
-| stream | used for | who knows the seed in PvP |
+| stream | used for | who knows it in PvP |
 |---|---|---|
-| `RNG.shared`        | starting player | both (commit-reveal, see §5) |
-| `rngPrivate(side)`  | that side's random deck building, initial shuffle, mulligan reshuffle, Dandelion's reshuffle | **only that side** |
-| `RNG.brain`         | AI decisions (`aiShouldPassWhenAhead`) | single player only |
+| `RNG.shared`        | starting player | both, via commit-reveal (§5) |
+| `rngPrivate(side)`  | that side's random deck, shuffle, mulligan reshuffle, Dandelion reshuffle | **only that side** |
+| `RNG.brain`         | AI decisions | single player only |
 
-Rules:
+Cosmetic randomness (particles, voice lines, music) stays `Math.random`.
 
-* `shuffle(arr, rng)` must be given a stream whenever the result matters. Without one it falls back to
-  `Math.random`, which is for cosmetic use only.
-* Cosmetic randomness may stay `Math.random`: particles, crumbs, voice-line choice, music track, deck
-  ids in the deck builder. It must never feed back into state.
-* **Card uids are opaque and deterministic.**
-  * A side's cards are numbered `p0, p1, ...` / `a0, a1, ...` **after** the private shuffle, so a uid
-    never reveals the card's identity.
-  * Tokens are `tok0, tok1, ...` from a counter reset each game. Both clients create tokens in the same
-    order, so their uids match.
-  * Developer-added cards use the next `p<n>`.
-  * The tutorial keeps its fixed hand-written uids.
-* Seeds can be forced for tests: `window.__gwaNextSeeds = { shared, player, ai }` (or
-  `__gwaDev.setSeeds`) before a game starts. `state.seeds` stores them. In PvP a client would only have
-  `shared` and its own seed.
-* Decks can be forced the same way: `window.__gwaNextDecks = { player: [ids], ai: [ids] }` (or
-  `__gwaDev.setDecks`). In PvP each client builds only its own deck.
-* Engine flows are async (animations, `setTimeout`). The logical order of state changes still has to be
-  identical on every client. This is guaranteed as long as decisions are only taken once the engine is
-  idle, which is what the controllers do.
-  * "Idle" includes `pendingKills === 0`: a killed card stays on the board, at 0 power, until its
-    death, burn or eat animation ends. The AI (`buffReactionsIdle`), multi-hit damage
-    (`applyMultiDamage`, the AI's sequential hits, Birna's follow-up) and the bots wait for those
-    removals before the next decision or hit. Otherwise "X is destroyed" (and the own-discard
-    reactions it triggers) could land before or after the next hit depending on frame timing.
+**Card uids are opaque and deterministic.**
 
-### Determinism test
+* **Single player:**
+  * deck cards are `p0..` / `a0..` after the private shuffle;
+  * tokens are `tok0..`.
+* **PvP:**
+  * a card in a deck has a private uid (`hd3`, `gd7`);
+  * when a seat draws its n-th card, that card gets the public uid `h<n>` / `g<n>` on both clients
+    (the owner's real card and the other client's placeholder). Draws therefore need no message and
+    reveal nothing; only the count is public;
+  * tokens are `ht<n>` / `gt<n>` from per-seat counters.
+* **Iteration order:** anything whose order can change state iterates seats host-first (`seatOrder()`,
+  `allBoardCards()`), so both clients burn, kill and react in the same order. In single player the
+  order is the classic player-first.
+* **Dev hooks for tests:**
+  * `window.__gwaNextSeeds` / `window.__gwaNextDecks`;
+  * `__gwaDev.setSeeds`, `setDecks`, `useBot`, `snapshot`;
+  * PvP: `__gwaDev.pvpBot`, `pvpNoShuffle`, `fakeBuild`, `pvpTamperDeck`, `netLog`,
+    `pvpSimulateDrop(ms)`, `pvpInfo()`, `pvpCanonical()`.
 
-`__gwaDev.useBot(side, seed)` replaces a seat's controller with a seeded bot. The test runs two
-headless pages with identical seeds:
+### Per-turn state hash
 
-* bot vs AI: the AI on its normal autonomous path
-* bot vs bot: both seats interactive, which exercises the exact path a remote player will use
+At every turn boundary (end of `endTurn`, including round end) each client hashes a canonical public
+state (`pvpCanonicalState`). It covers:
 
-It requires identical `state.log`, `state.actionLog` and final public state.
+* round, turn, active seat;
+* per seat, host first: board (uid, card, power, Order used, owner), discard pile, hand uids, deck
+  count, passed flag and score.
 
-How to run it (Playwright):
+The hashes are exchanged. A mismatch shows **"Out of sync"** (Keep playing / End match) and writes
+both states to the console.
 
-1. For each of two pages, call `__gwaDev.setSeeds(...)`, optionally `__gwaDev.setDecks(...)`, then
-   `__gwaDev.useBot('player', seed)` (and `useBot('ai', seed)` for bot vs bot), then `startNewGame()`.
-2. Click `#roundContinueBtn` whenever it appears.
-3. When `state.phase === 'gameEnd'`, compare `__gwaDev.snapshot()` from both pages.
+### Single-player determinism test
 
-Step 1 results:
-
-* 3 seeds with random decks, each run as bot vs AI and as bot vs bot: all 6 runs identical.
-* 3 seeds with monster-only decks (eat/discard heavy), each run as bot vs AI and as bot vs bot: all 6
-  runs identical.
-
-The AI code is written for the `'ai'` seat only, so "AI vs AI" is done as bot (player seat) vs AI
-(opponent seat) and as bot vs bot. Letting the AI play the bottom seat would need a perspective
-refactor of the AI. That work is not needed for PvP.
+Two pages with the same seeds play bot vs AI and bot vs bot and must produce identical logs, action
+logs and final state.
 
 ## 4. Public vs private state
 
 | zone / field | visibility |
 |---|---|
-| hand (cards and their order) | **private** to the owner; the opponent knows the count and opaque uids |
-| deck / draw pile (cards and order) | **private** to the owner; the opponent knows the count |
-| private seed | **private** |
-| boards, powers, buffs, flags (`orderUsed`, `playedTurn`, bloodthirst, ...) | public |
+| hand (cards and order) | **private**: the friend sees card backs (count + uids only) |
+| deck / draw pile | **private**: the friend sees the count |
+| private seed, deck salt | **private** (the deck list and salt are revealed at game end, see §5) |
+| boards, powers, buffs, flags | public |
 | discard piles | public |
-| hand/deck counts, passed, actedThisTurn, orderUsedThisTurn, mulliganUsed | public |
+| counts, passed, actedThisTurn, orderUsedThisTurn, mulliganUsed | public |
 | round, turn, scores, starting player, shared seed | public |
 
-Data model:
+The friend's hand and deck exist on this client as placeholders: `{ uid, hidden: true, owner: 'ai' }`.
 
-* `publicView(viewer)` returns what a client may show or send. The opponent's hand and deck appear as
-  `{ uid, hidden: true }` placeholders (`hiddenCard(uid)`) plus counts.
-* `revealCard(side, uid, id)` turns a placeholder into a real card instance when the owner reveals it.
-* In single player nothing is hidden yet. Both seats hold real cards, and the UI simply never shows the
-  opponent's hand or deck.
+* `pvpRevealHandCard` turns a placeholder into a real card when it is played.
+* `pvpDeckTopReveal` does the same for Maxii's top card.
+* A card that returns to hand from the board (Ciri) stays known, because its identity was already
+  public.
 
-### Hidden-information audit (cards that read or reveal hidden zones)
+### Hidden-information audit
 
 | card / mechanic | what it touches | PvP handling |
 |---|---|---|
-| **Maxii van Dekkar** (`playDamageFromDeckTop`) | reveals the top card of its **owner's own** deck, which deals damage equal to its power and is shown face up beside the pile | the owner's client sends `reveal {uid, id}` for the top card before the effect resolves |
-| **Dandelion** (`deckTopChoice`) | the owner looks at **their own** deck, puts one card on top and reshuffles the rest | resolved on the owner's client only; the opponent learns nothing (the reshuffle uses the owner's private stream). The opponent's client just keeps "deck = N unknown". |
-| `deckBottomChoice` handler (formerly Angoulême's "look at the opponent's deck, bury a card") | the **opponent's** deck | **No current card uses it.** It is dormant. If revived it would require the deck owner to reveal the whole deck to the chooser, and the owner then reshuffles with their own seed (the call already passes `chooser`). |
-| draws (end-of-turn, redraw to 4, mulligan) | the owner's own deck | the owner announces the drawn **uids** (not identities) |
-| round-end "return to hand" (e.g. Ciri) | a public card goes back into a hand | its identity is already public; it stays known |
-| AI | reads only its own hand and deck (`aiPlayDamageFor` peeks its own top card for Maxii) | not present in PvP |
-| local draw animation (`flyPlayerDraw`) | peeks the local seat's own top card | local only |
+| **Maxii van Dekkar** | reveals its owner's own top deck card | the owner sends `{ t: 'reveal', key: 'deckTop', id }` when the effect resolves; the other client waits for it (`pvpDeckTopReveal`) |
+| **Dandelion** | owner picks from their own deck, card on top, rest reshuffled | the pick is sent as `'?'`; the other client only keeps a count; the log says "puts a card on top" |
+| draws, redraw to 4, mulligan | owner's own deck | deterministic public uids, no identities, no message |
+| `deckBottomChoice` (old Angoulême effect) | the opponent's deck | **unused by any card (dormant)**; it would need the deck owner to reveal the whole deck |
+| round-end return to hand (Ciri) | public card back into a hand | stays known |
+| AI | its own zones | never runs in PvP |
+| hover inspector / opponent hand rendering | | the opponent hand renders card backs only; placeholders are never rendered |
+| log | | names come only from public cards; "Opponent" becomes the friend's escaped name |
 
-Result: **no current card reads the opponent's hand or deck.** Only Maxii reveals a hidden card (the
-owner's own top card).
+Result: **no card reads the opponent's hand or deck.** The automated tests check, during whole games,
+that the other client's DOM never contains the friend's hand cards. They also check that every card
+id received over the wire was already public by then.
 
-## 5. Planned network protocol (step 2 sketch)
+## 5. Network
 
-Transport: a WebRTC data channel (ordered, reliable). Signalling is out of band (copy-paste offer and
-answer, or a tiny relay). All messages are JSON with `{ t, seq, ... }`, where `seq` increases per sender.
+### Transports
 
-1. **`hello`** `{ version, protocol: 1, gameHash }`: both sides check they run the same `game.html` build
-   (hash of the rules and card DB) and abort on mismatch.
-2. **Deck commit** `{ t: 'deckCommit', hash }`: each side commits `H(deckIds sorted + salt)` so a deck
-   cannot be swapped later. The salt and list are revealed at game end (or on dispute) for verification.
-3. **Seed exchange (commit-reveal)**: neither side picks the shared seed alone.
-   * `{ t: 'seedCommit', hash: H(rA) }` both ways, then `{ t: 'seedReveal', r: rA }` both ways.
-   * Each side verifies the other's commit.
-   * `shared = H(rA || rB)` determines the starting player and any future public randomness.
-   * Each side's **private** seed never leaves its client.
-   * Each client shuffles its own deck with its private stream and announces only the resulting uid
-     list (`p0..p24` order is implied, so in practice just the count).
-4. **`action`** `{ t: 'action', side, action }`: an action of the sender's seat. The receiver maps the
-   sender's `'player'` to its own `'ai'` seat, runs `submitAction('ai', action)`, and rejects it (with
-   `resync`) if `validateAction` fails.
-5. **`reveal`** `{ t: 'reveal', cards: [{ uid, id }] }`: sent **before** an action that makes a hidden
-   card public (`play`; Maxii's top card; a card leaving hand or deck in any other way). The receiver calls
-   `revealCard`.
-6. **`draw`** `{ t: 'draw', uids: [...] }`: which opaque uids moved from deck to hand. Identities are not
-   sent.
-7. **`resync`** `{ t: 'resync', turn, stateHash }`: periodic or on demand. Both sides hash
-   `publicView(...)` with seat names normalised (local seat first) and compare. On mismatch, fall back
-   to the last agreed snapshot or abort.
-8. **`concede`** `{ t: 'concede' }`: ends the game. A disconnect timeout counts as a concede after a grace
-   period.
+All three share one interface: `send(str)`, `close()`, `onmessage`, `onstatus('open'|'down'|'up')`.
 
-Ordering rule: an action is applied only when the local engine is idle and in the same logical step as
-the sender's. Requests are generated identically on both clients because the engine is deterministic.
-The non-acting client therefore already *expects* the answer and queues it until its engine reaches
-that point.
+* **Room codes (PeerJS)**
+  * Library: `peerjs@1.5.4`, loaded lazily from unpkg with jsdelivr as fallback.
+  * Broker: the free public PeerJS cloud.
+  * ICE: Google STUN, plus an optional TURN entry in `PVP_TURN_SERVERS`.
+  * Room id: `gwentadv-v1-<6 chars>`; the prefix avoids collisions with other apps.
+  * The guest reconnects automatically every 3 s if the data connection drops. The host accepts a
+    reconnect only from the same guest token.
+* **Manual codes**
+  * Plain `RTCPeerConnection` with an ordered data channel and non-trickle ICE (gathering waits up to
+    5 s).
+  * The offer/answer SDP is deflate-compressed and base64-encoded: `GWAO1z:…` for the invite,
+    `GWAA1z:…` for the reply.
+  * There is no automatic reconnect; ICE may still recover a brief outage by itself.
+* **Local**
+  * `BroadcastChannel('gwa-local-<code>')`, with `localStorage` events as a fallback.
+  * Developer mode only.
 
-## 6. Known risks / TODO for step 2
+### Session (`makePvpSession`)
 
-* **AI policy is still inline** in the engine's non-interactive branches. It is not wrapped in
-  `AIController` methods. This is harmless for PvP (no AI), but a full extraction is still open.
-* **Remote seat UI**:
-  * Banners such as "Opponent is choosing..." are not shown yet. A non-local targeting session just
-    shows nothing locally.
-  * The cancel-confirm dialog and the discard/deck picker are local-only by design.
-* **Round-end "Continue" overlay** is a local gate (not an action). In PvP both clients must reach the
-  next round independently. Actions that arrive while the overlay is open must be queued.
-* **Hidden placeholders**: engine code that inspects card fields of a hand card on the opponent seat
-  would break on a `{ hidden: true }` placeholder. A review found only count-based uses (render,
-  `turnEndable`, `drawsLeftThisRound`). This must be re-verified when step 2 actually installs
-  placeholders.
-* **Timing**: engine flows use animation callbacks and timers. Determinism holds because state changes
-  happen in a fixed logical order and decisions wait for an idle engine. Two parallel flows racing each
-  other would break it; the determinism test is the guard.
-* **Validation surface**:
-  * `validateAction` covers turn/side/candidate legality.
-  * A malicious peer could still send a legal but impossible card *identity* in `reveal`. The deck
-    commit (§5.2) is what lets the cheated party detect that at game end.
-* **Tutorial** keeps its scripted AI and fixed uids. It is single-player only.
-* `__gwaDev` (seeds, bots, snapshot) is a hidden developer hook with no UI.
+* Every message is `{ seq, m }` and is kept in an outbox.
+* The receiver drops duplicates. On a gap it asks `{ c: 'resume', last }`, and the sender replays
+  everything after `last`.
+* A ping is sent every 1.5 s. After 6 s of silence the session is "down": a top banner shows
+  "Connection lost – reconnecting… (Ns)" with **End match**, and the transport tries to reconnect.
+* When traffic comes back, both sides send `resume` and the missed messages are replayed.
+* After 30 s down the session is lost, and a "Connection lost" popup leads back to the menu.
+* A deliberate exit sends `{ c: 'bye' }` (also on page close). The other side immediately shows
+  "Opponent left".
+
+### Match protocol (`m.t`)
+
+1. **`hello`** `{ proto, build, name }`
+   * `build` is the SHA-256 of the whole inline game script, so any difference in rules or cards is
+     refused with a clear message.
+2. **`commit`** `{ deckHash, deckCount, seedHash }`
+   * `deckHash = SHA-256('deck:' + sorted ids + '|' + salt)`
+   * `seedHash = SHA-256('seed:' + r)`
+   * It is sent right after the deck is picked.
+3. **`seed`** `{ r }`
+   * Each side reveals its `r` only after receiving the other's commitment, then verifies the other's
+     `r` against its commitment.
+   * `shared = SHA-256('shared:' + r_host + '|' + r_guest)`, so neither side picks it alone. The host
+     starts if the first shared draw is below 0.5.
+4. **`act`** `{ a }`: one action of the sender's seat (§2).
+5. **`reveal`** `{ key: 'deckTop', id }`: Maxii's top card.
+6. **`hash`** `{ k, h }`: the per-turn state hash.
+7. **`deck`** `{ ids, salt }`: sent at game end. The receiver checks:
+   * the hash matches the commitment;
+   * every card the friend played is contained in the list.
+
+   Otherwise the end screen shows a cheating warning.
+8. **`concede`**, **`rematch`** (both must send it; same deck choices, fresh salt and seed), **`leave`**.
+
+## 6. Testing
+
+Automated tests, in the container: Playwright with real mouse clicks for connecting and deck selection,
+and seeded bots driving both seats through the PvP action path. Results:
+
+* **Local transport, full games:**
+  * random decks, and monster/reveal-heavy decks (Rotfiend, Archgriffin, Whispess, Monster Egg, Hillock,
+    Maxii, Dandelion, ...): every turn hash equal;
+  * both deck checks verified;
+  * no hidden card identity in the other page's DOM or received messages.
+* **Manual WebRTC between two separate browser contexts:** connect by pasting codes, then a full game.
+* **Room-code flow** (Host / Join popups, wrong code, guest reconnect after the data connection
+  closes): tested against a **stand-in for PeerJS**, because the sandbox cannot reach the real broker.
+* **Real-mouse scenarios:**
+  * Archgriffin both-pick across the two pages;
+  * Ghoul → Monster Egg discard pick;
+  * Whispering Hillock → discard pick.
+* **Desync injection** (a power changed on one page): "Out of sync" on both pages.
+* **Disconnect:**
+  * 10 s drop: banner on both pages, resume, game finishes in sync;
+  * 60 s drop: "Connection lost".
+* **Opponent closes the tab:** "Opponent left".
+* **Concede, cheat detection and rematch:** the conceding side and the winner see the right end
+  screens; a tampered deck list is flagged; a rematch starts a new synced game.
+* **Build mismatch:** refused on both sides.
+
+**Not tested** (needs a real internet setup):
+
+* the real PeerJS cloud broker and the CDN download;
+* STUN/TURN across real NATs;
+* the game inside an itch.io iframe;
+* Safari/Firefox (the tests use Chromium);
+* real long-distance latency.
+
+## 7. Known risks / TODO
+
+* **PeerJS public broker:** free and best-effort; it may be down or rate-limited. The manual codes are
+  the fallback. Self-hosting a PeerJS server, or adding TURN, would be the robust upgrade.
+* **Strict NATs** need TURN (`PVP_TURN_SERVERS`); none is configured.
+* **Reconnect** works while both pages stay open:
+  * the session replays missed messages after a drop;
+  * a **page reload** cannot resume (the game state lives in the page), so the match ends.
+  * Manual-code connections cannot re-signal after a full ICE failure.
+* **Validation:** `validateAction` checks legality, and the deck commit catches fake identities at the
+  end. A modified client could still, for example, **look at its own deck order** (it is private) or
+  stall. The end-of-game check reports a mismatch but cannot undo the game.
+* **Determinism** rests on "apply at a settled point"; the per-turn hash is the guard. If a desync ever
+  shows up, the console holds both canonical states.
+* The AI policy is still inline in the engine's non-interactive branches. That is harmless for PvP.
+* The tutorial keeps its scripted AI and fixed uids; it is single-player only.

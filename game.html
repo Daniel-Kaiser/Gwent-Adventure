@@ -1856,6 +1856,38 @@
     border: 1px solid var(--accent-dim);
   }
 
+
+  /* ---- PvP (Challenge a Friend) ---- */
+  .pvpBody { display: flex; flex-direction: column; gap: 10px; }
+  .pvpNameRow { display: flex; align-items: center; gap: 10px; }
+  .pvpNameRow span { white-space: nowrap; color: var(--muted); font-size: 13px; }
+  .pvpLinks { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+  .pvpLinks a { color: var(--accent); }
+  .pvpStatus { margin: 0; }
+  .pvpCopyRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pvpCodeBox { user-select: text; -webkit-user-select: text; }
+  .pvpCopyRow .pvpCodeBox { flex: 1 1 200px; }
+  .gwDlg input.pvpCodeBox.roomCode { font: 700 26px/1.2 'Consolas', 'Courier New', monospace; letter-spacing: 6px; text-align: center; text-transform: uppercase; }
+  .gwDlg textarea.pvpCodeBox.multi { min-height: 90px; font: 11px/1.3 'Consolas', 'Courier New', monospace; word-break: break-all; width: 100%; }
+  .pvpSpinner { width: 26px; height: 26px; margin: 4px auto 0; border-radius: 50%; border: 3px solid var(--accent-dim); border-top-color: var(--accent); animation: pvpSpin 1s linear infinite; }
+  @keyframes pvpSpin { to { transform: rotate(360deg); } }
+  #pvpWaitBanner { position: fixed; left: 50%; top: 10px; transform: translateX(-50%); z-index: 1300; display: none; pointer-events: none;
+    padding: 6px 16px; border-radius: 16px; background: #000b; color: var(--text); font-size: 14px; letter-spacing: .3px; box-shadow: 0 4px 14px #0008; }
+  #pvpWaitBanner.show { display: block; animation: pvpPulse 1.6s ease-in-out infinite; }
+  @keyframes pvpPulse { 0%,100% { opacity: 1; } 50% { opacity: .65; } }
+  #pvpNetBanner { position: fixed; left: 50%; top: 8px; transform: translateX(-50%); max-width: calc(100vw - 360px); z-index: 2700; display: none; align-items: center; justify-content: center; gap: 14px;
+    padding: 7px 14px; border-radius: 10px; background: #7a1c24f0; color: #fff; font-weight: 700; box-shadow: 0 4px 14px #0009; }
+  #pvpNetBanner.show { display: flex; }
+  .pvpDeckCheck { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  .pvpDeckCheck.bad { color: var(--bad); font-weight: 700; }
+  #menuConcedeBtn { display: none; }
+  body.pvpMode #menuConcedeBtn { display: block; }
+  body.pvpMode #newGameBtn { display: none; }
+  .flyingCard .flipBack { position: absolute; inset: 0; border-radius: inherit; background: url('icons/cardback.png') center / cover; z-index: 5;
+    animation: pvpFlipBack .45s linear forwards; }
+  @keyframes pvpFlipBack { 0%, 49% { opacity: 1; } 51%, 100% { opacity: 0; } }
+  .flyingCard.flipIn { animation: pvpFlipIn .45s ease-in-out; }
+  @keyframes pvpFlipIn { 0% { transform: scaleX(1); } 50% { transform: scaleX(0.05); } 100% { transform: scaleX(1); } }
   /* ---- New Game chooser (title screen) ---- */
   #newGameModal {
     position: fixed; inset: 0; background: #0009;
@@ -1938,7 +1970,7 @@
     <button id="newGameCloseBtn" class="modalCloseBtn" aria-label="Close">&times;</button>
     <h2>New Game</h2>
     <button id="quickGameBtn" class="newGameOption">Quick Game vs AI</button>
-    <button id="challengeFriendBtn" class="newGameOption" disabled title="Coming soon">Challenge a Friend<span class="comingSoon">Coming soon</span></button>
+    <button id="challengeFriendBtn" class="newGameOption">Challenge a Friend</button>
     <button id="tavernRunBtn" class="newGameOption" disabled title="Coming soon">Tavern Run<span class="comingSoon">Coming soon</span></button>
   </div>
 </div>
@@ -2055,6 +2087,7 @@
   <button id="hamburgerBtn" title="Menu"><span></span><span></span><span></span></button>
   <div id="hamburgerMenu">
     <button id="newGameBtn">New Game</button>
+    <button id="menuConcedeBtn">Concede</button>
     <button id="menuHowToPlayBtn">How to Play</button>
     <button id="menuMainMenuBtn">Main Menu</button>
     <button id="menuSettingsBtn">Settings</button>
@@ -3371,6 +3404,8 @@ function recordAction(side, action, by) {
 // The single entry point for decisions of interactive sides. Returns
 // whether the action was accepted.
 function submitAction(side, action) {
+  // PvP: my seat's decisions are also sent to my friend (see pvpSubmitLocal)
+  if (side === 'player' && pvp && state && state.pvpSeats) return pvpSubmitLocal(action);
   if (!validateAction(side, action)) return false;
   recordAction(side, action);
   applyAction(side, action);
@@ -3402,7 +3437,7 @@ function makeBotController(side, seed) {
   bot.timer = setInterval(() => { try { botTick(bot, side); } catch (e) { console.error(e); } }, 120);
   return bot;
 }
-function botAnimating() { return pendingKills > 0 || !!document.querySelector('.projectile, .flyingCard'); }
+function botAnimating() { return pendingKills > 0 || !!document.querySelector('.projectile, .flyingCard:not(.heldCard)'); }
 function botTick(bot, side) {
   if (controllers[side] !== bot) { clearInterval(bot.timer); return; }
   if (!state) return;
@@ -3468,6 +3503,16 @@ window.__gwaDev = {
   setDecks(decks) { window.__gwaNextDecks = decks; },
   useBot(side, seed) { controllers[side] = makeBotController(side, seed); },
   useDefaultControllers() { controllers.player = LocalHumanController; controllers.ai = AIController; },
+  // PvP test hooks (set before the match starts unless noted)
+  pvpBot: null,          // seed: my seat is driven by the seeded bot (through the PvP action path)
+  pvpNoShuffle: false,   // keep my deck in list order (top = last card)
+  fakeBuild: null,       // pretend to run another build (version-mismatch test)
+  pvpTamperDeck: false,  // send a modified deck list at the end (cheat-detection test)
+  netLog: null,          // set to [] to record every raw message received
+  pvpSimulateDrop(ms) { if (pvp && pvp.transport.simulateDrop) pvp.transport.simulateDrop(ms); },
+  pvpInfo() { return pvp ? { role: pvp.role, oppName: pvp.oppName, status: pvp.session && pvp.session.status, queued: pvp.actionQueue.length,
+                             hashes: pvp.hashes, desync: pvp.desyncShown, deckCheck: pvp.oppDeckCheck, revealedOpp: pvp.revealedOpp.slice(), ended: pvp.ended } : null; },
+  pvpCanonical() { return state && state.pvpSeats ? pvpCanonicalState() : null; },
   snapshot() {
     if (!state) return null;
     return { log: state.log.slice(), actions: (state.actionLog || []).slice(), phase: state.phase, scores: { ...state.scores },
@@ -3476,6 +3521,1030 @@ window.__gwaDev = {
              decks: { player: state.players.player.deck.map(c => c.uid + ':' + c.id), ai: state.players.ai.deck.map(c => c.uid + ':' + c.id) } };
   },
 };
+
+/* =========================================================
+   PVP: CHALLENGE A FRIEND (see docs/multiplayer.md)
+   Two browsers, no game server. Layers, bottom to top:
+   - transports: PeerJS room codes (free public broker + STUN; library
+     loaded from a CDN only when used), manual copy-paste WebRTC codes,
+     and a same-browser BroadcastChannel transport for testing with two tabs
+   - session: sequence numbers, replay on resume, heartbeat, disconnect
+     detection (makePvpSession)
+   - match: hello/build check, deck commit, commit-reveal shared seed,
+     actions, reveals, per-turn state hashes, concede, rematch (pvp*)
+   Each client is 'player' (its own seat) and 'ai' (the friend's seat).
+   The friend's hand and draw pile are hidden placeholders on this client.
+========================================================= */
+const PVP_PROTOCOL = 1;
+const PVP_PEER_PREFIX = 'gwentadv-v1-';          // keeps our room ids apart from other PeerJS apps
+const PVP_PEERJS_URLS = [
+  'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js',
+  'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js',
+];
+// STUN finds each player's public address. For players behind strict NATs
+// a TURN relay is needed -- add one here (free tiers exist), e.g.
+// { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' }
+const PVP_ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+const PVP_TURN_SERVERS = [];
+function pvpIceServers() { return PVP_ICE_SERVERS.concat(PVP_TURN_SERVERS); }
+const PVP_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const PVP_HEARTBEAT_MS = 1500, PVP_SILENCE_MS = 6000, PVP_RECONNECT_WINDOW_MS = 30000;
+const PVP_NAME_KEY = 'gwentAdventurePlayerName';
+
+/* ---- SHA-256 (sync; crypto.subtle is unavailable on some file:// / insecure pages) ---- */
+const SHA256_K = new Uint32Array([
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+function sha256Hex(str) {
+  const msg = new TextEncoder().encode(String(str));
+  const len = msg.length, bitLenHi = Math.floor(len / 0x20000000), bitLenLo = (len << 3) >>> 0;
+  const total = ((len + 9 + 63) >> 6) << 6;
+  const buf = new Uint8Array(total);
+  buf.set(msg); buf[len] = 0x80;
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(total - 8, bitLenHi); dv.setUint32(total - 4, bitLenLo);
+  const H = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
+  const W = new Uint32Array(64);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < total; off += 64) {
+    for (let i = 0; i < 16; i++) W[i] = dv.getUint32(off + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(W[i-15], 7) ^ rotr(W[i-15], 18) ^ (W[i-15] >>> 3);
+      const s1 = rotr(W[i-2], 17) ^ rotr(W[i-2], 19) ^ (W[i-2] >>> 10);
+      W[i] = (W[i-16] + s0 + W[i-7] + s1) >>> 0;
+    }
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25), ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + SHA256_K[i] + W[i]) >>> 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22), mj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + mj) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0; H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
+    H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0; H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0;
+  }
+  return Array.from(H, x => x.toString(16).padStart(8, '0')).join('');
+}
+
+// Build fingerprint: the whole inline game script. Two clients may only play
+// if they run exactly the same rules and card data.
+let pvpBuildHashCache = null;
+function pvpBuildHash() {
+  if (window.__gwaDev && __gwaDev.fakeBuild) return __gwaDev.fakeBuild;
+  if (!pvpBuildHashCache) {
+    const src = Array.from(document.scripts).filter(x => !x.src).map(x => x.textContent).join('\n');
+    pvpBuildHashCache = sha256Hex(src).slice(0, 16);
+  }
+  return pvpBuildHashCache;
+}
+function pvpRandomCode(n) {
+  const out = [];
+  let vals;
+  try { vals = new Uint32Array(n); crypto.getRandomValues(vals); } catch (e) { vals = Array.from({ length: n }, () => Math.floor(Math.random() * 1e9)); }
+  for (let i = 0; i < n; i++) out.push(PVP_CODE_ALPHABET[vals[i] % PVP_CODE_ALPHABET.length]);
+  return out.join('');
+}
+function pvpCleanCode(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+function pvpCleanName(v) { return String(v || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 20) || 'Player'; }
+function pvpMyName() { try { return pvpCleanName(localStorage.getItem(PVP_NAME_KEY) || 'Player'); } catch (e) { return 'Player'; } }
+function pvpSaveName(v) { try { localStorage.setItem(PVP_NAME_KEY, pvpCleanName(v)); } catch (e) {} }
+
+/* =========================================================
+   TRANSPORTS -- { kind, send(str), close(), onmessage(str), onstatus('open'|'down'|'up'), reconnect?(), simulateDrop?(ms) }
+========================================================= */
+// (c) Same browser, two tabs (BroadcastChannel; localStorage events as a fallback).
+function makeLocalTransport(code, isHost) {
+  const myId = randomSeedString();
+  const name = 'gwa-local-' + code;
+  const t = { kind: 'local', peer: null, onmessage: null, onstatus: null, dropUntil: 0, opened: false };
+  let ch = null, joinTimer = null, storageHandler = null;
+  const deliver = (raw) => {
+    let o; try { o = JSON.parse(raw); } catch (e) { return; }
+    if (!o || o.from === myId) return;
+    if (isHost && o.k === 'join') {
+      if (!t.peer) t.peer = o.from;
+      if (t.peer === o.from) { post({ k: 'accept', to: o.from }); if (!t.opened) { t.opened = true; t.onstatus && t.onstatus('open'); } }
+      return;
+    }
+    if (!isHost && o.k === 'accept' && o.to === myId) {
+      if (!t.peer) { t.peer = o.from; clearInterval(joinTimer); t.opened = true; t.onstatus && t.onstatus('open'); }
+      return;
+    }
+    if (o.k === 'data' && t.peer && o.from === t.peer && o.to === myId) {
+      if (Date.now() < t.dropUntil) return;
+      t.onmessage && t.onmessage(o.d);
+    }
+  };
+  const post = (o) => {
+    const raw = JSON.stringify({ ...o, from: myId });
+    if (ch) { ch.postMessage(raw); return; }
+    try { localStorage.setItem(name, raw + '#' + Math.random()); } catch (e) {}
+  };
+  if (typeof BroadcastChannel === 'function') {
+    ch = new BroadcastChannel(name);
+    ch.onmessage = (ev) => deliver(ev.data);
+  } else {
+    storageHandler = (ev) => { if (ev.key === name && ev.newValue) deliver(ev.newValue.slice(0, ev.newValue.lastIndexOf('#'))); };
+    window.addEventListener('storage', storageHandler);
+  }
+  if (!isHost) { const j = () => post({ k: 'join' }); j(); joinTimer = setInterval(j, 400); }
+  t.send = (str) => { if (!t.peer || Date.now() < t.dropUntil) return; post({ k: 'data', to: t.peer, d: str }); };
+  t.close = () => { clearInterval(joinTimer); try { ch && ch.close(); } catch (e) {} if (storageHandler) window.removeEventListener('storage', storageHandler); };
+  t.simulateDrop = (ms) => { t.dropUntil = Date.now() + ms; };
+  return t;
+}
+
+// (b) Manual WebRTC: copy-paste offer/answer codes, no broker at all.
+function pvpWaitIce(pc, ms) {
+  return new Promise(res => {
+    if (pc.iceGatheringState === 'complete') { res(); return; }
+    const done = () => { clearTimeout(tm); pc.removeEventListener('icegatheringstatechange', chk); res(); };
+    const chk = () => { if (pc.iceGatheringState === 'complete') done(); };
+    const tm = setTimeout(done, ms || 5000); // STUN unreachable? use what we have
+    pc.addEventListener('icegatheringstatechange', chk);
+  });
+}
+async function pvpEncodeSdp(desc, kind) {
+  const json = JSON.stringify({ t: desc.type, s: desc.sdp });
+  let bytes = new TextEncoder().encode(json), z = '';
+  if (typeof CompressionStream === 'function') {
+    try {
+      const cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+      bytes = new Uint8Array(await new Response(cs).arrayBuffer()); z = 'z';
+    } catch (e) { bytes = new TextEncoder().encode(json); z = ''; }
+  }
+  let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return `GWA${kind}1${z}:` + btoa(bin);
+}
+async function pvpDecodeSdp(code, kind) {
+  const c = String(code || '').replace(/\s+/g, '');
+  const m = c.match(/^GWA([OA])1(z?):(.+)$/);
+  if (!m) throw new Error('That is not a Gwent Adventure connection code.');
+  if (m[1] !== kind) throw new Error(kind === 'O' ? 'That is a reply code -- paste it on the hosting side instead.' : 'That is an invite code -- paste the reply code your friend sent back.');
+  let bytes;
+  try { bytes = Uint8Array.from(atob(m[3]), ch => ch.charCodeAt(0)); } catch (e) { throw new Error('The code is damaged (copy the whole code).'); }
+  if (m[2]) {
+    if (typeof DecompressionStream !== 'function') throw new Error('This browser cannot read compressed codes.');
+    try { bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()); }
+    catch (e) { throw new Error('The code is damaged (copy the whole code).'); }
+  }
+  let o; try { o = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { throw new Error('The code is damaged (copy the whole code).'); }
+  return { type: o.t, sdp: o.s };
+}
+function makeManualTransport() {
+  const pc = new RTCPeerConnection({ iceServers: pvpIceServers() });
+  const t = { kind: 'manual', onmessage: null, onstatus: null, dc: null, pc, dropUntil: 0, opened: false };
+  const attach = (dc) => {
+    t.dc = dc;
+    dc.onopen = () => { if (!t.opened) { t.opened = true; t.onstatus && t.onstatus('open'); } else t.onstatus && t.onstatus('up'); };
+    dc.onclose = () => { t.onstatus && t.onstatus('down'); };
+    dc.onmessage = (e) => { if (Date.now() < t.dropUntil) return; t.onmessage && t.onmessage(e.data); };
+  };
+  pc.ondatachannel = (e) => attach(e.channel);
+  pc.oniceconnectionstatechange = () => {
+    const st = pc.iceConnectionState;
+    if (st === 'disconnected' || st === 'failed') t.onstatus && t.onstatus('down');
+    else if ((st === 'connected' || st === 'completed') && t.opened) t.onstatus && t.onstatus('up');
+  };
+  t.send = (str) => { if (t.dc && t.dc.readyState === 'open' && Date.now() >= t.dropUntil) { try { t.dc.send(str); } catch (e) {} } };
+  t.close = () => { try { t.dc && t.dc.close(); } catch (e) {} try { pc.close(); } catch (e) {} };
+  t.createOffer = async () => {
+    attach(pc.createDataChannel('gwa', { ordered: true }));
+    await pc.setLocalDescription(await pc.createOffer());
+    await pvpWaitIce(pc);
+    return pvpEncodeSdp(pc.localDescription, 'O');
+  };
+  t.acceptOffer = async (code) => {
+    await pc.setRemoteDescription(await pvpDecodeSdp(code, 'O'));
+    await pc.setLocalDescription(await pc.createAnswer());
+    await pvpWaitIce(pc);
+    return pvpEncodeSdp(pc.localDescription, 'A');
+  };
+  t.acceptAnswer = async (code) => { await pc.setRemoteDescription(await pvpDecodeSdp(code, 'A')); };
+  t.simulateDrop = (ms) => { t.dropUntil = Date.now() + ms; };
+  return t;
+}
+
+// (a) Room codes through the free public PeerJS broker (loaded lazily).
+let pvpPeerJsPromise = null;
+function pvpLoadPeerJs() {
+  if (window.Peer) return Promise.resolve();
+  if (pvpPeerJsPromise) return pvpPeerJsPromise;
+  const tryUrl = (i) => new Promise((resolve, reject) => {
+    if (i >= PVP_PEERJS_URLS.length) { reject(new Error('Could not load the connection library (PeerJS). Check your internet connection, or use the manual connection codes.')); return; }
+    const sc = document.createElement('script');
+    sc.src = PVP_PEERJS_URLS[i]; sc.async = true; sc.crossOrigin = 'anonymous';
+    sc.onload = () => (window.Peer ? resolve() : tryUrl(i + 1).then(resolve, reject));
+    sc.onerror = () => { sc.remove(); tryUrl(i + 1).then(resolve, reject); };
+    document.head.appendChild(sc);
+  });
+  pvpPeerJsPromise = tryUrl(0).catch(e => { pvpPeerJsPromise = null; throw e; });
+  return pvpPeerJsPromise;
+}
+function makePeerTransport(isHost) {
+  const t = { kind: 'peer', onmessage: null, onstatus: null, conn: null, peer: null, closed: false, opened: false, dropUntil: 0, code: null, token: randomSeedString() };
+  const cfg = { config: { iceServers: pvpIceServers() }, debug: 0 };
+  let retryTimer = null;
+  const attach = (conn) => {
+    if (t.conn && t.conn !== conn) { try { t.conn.close(); } catch (e) {} }
+    t.conn = conn;
+    conn.on('open', () => {
+      if (t.conn !== conn) return;
+      if (!t.opened) { t.opened = true; t.onstatus && t.onstatus('open'); } else t.onstatus && t.onstatus('up');
+    });
+    conn.on('data', (d) => { if (t.conn !== conn || Date.now() < t.dropUntil) return; t.onmessage && t.onmessage(typeof d === 'string' ? d : JSON.stringify(d)); });
+    conn.on('close', () => { if (t.conn === conn && !t.closed) t.onstatus && t.onstatus('down'); });
+    conn.on('error', () => {});
+  };
+  t.send = (str) => { if (t.conn && t.conn.open && Date.now() >= t.dropUntil) { try { t.conn.send(str); } catch (e) {} } };
+  t.close = () => { t.closed = true; clearInterval(retryTimer); try { t.conn && t.conn.close(); } catch (e) {} try { t.peer && t.peer.destroy(); } catch (e) {} };
+  t.simulateDrop = (ms) => { t.dropUntil = Date.now() + ms; };
+  // host: register a short room code with the broker; resolves with the code
+  t.host = () => new Promise((resolve, reject) => {
+    let attempts = 0;
+    const tryCode = () => {
+      const code = pvpRandomCode(6);
+      const peer = new Peer(PVP_PEER_PREFIX + code, cfg);
+      t.peer = peer;
+      peer.on('open', () => { t.code = code; resolve(code); });
+      peer.on('connection', (conn) => {
+        const tok = conn.metadata && conn.metadata.token;
+        if (t.guestToken && tok !== t.guestToken) { try { conn.close(); } catch (e) {} return; } // room already taken
+        t.guestToken = tok;
+        attach(conn);
+      });
+      peer.on('disconnected', () => { if (!t.closed) setTimeout(() => { try { peer.reconnect(); } catch (e) {} }, 1500); });
+      peer.on('error', (err) => {
+        if (err && err.type === 'unavailable-id' && attempts++ < 4 && !t.code) { try { peer.destroy(); } catch (e) {} tryCode(); return; }
+        if (!t.code) reject(new Error('Could not reach the matchmaking service (' + (err && err.type || 'error') + '). Try again, or use the manual connection codes.'));
+      });
+    };
+    tryCode();
+  });
+  // guest: connect to the host's room; resolves once the connection opens
+  t.join = (code) => new Promise((resolve, reject) => {
+    const peer = new Peer(undefined, cfg);
+    t.peer = peer;
+    const hostId = PVP_PEER_PREFIX + code;
+    let settled = false;
+    const connect = () => attach(peer.connect(hostId, { reliable: true, serialization: 'json', metadata: { token: t.token } }));
+    peer.on('open', () => { connect(); });
+    peer.on('disconnected', () => { if (!t.closed) setTimeout(() => { try { peer.reconnect(); } catch (e) {} }, 1500); });
+    peer.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(err && err.type === 'peer-unavailable' ? 'No game found with that code. Check the code and that your friend is still waiting.' :
+        'Could not reach the matchmaking service (' + (err && err.type || 'error') + '). Try again, or use the manual connection codes.'));
+    });
+    const prev = t.onstatus;
+    t.onstatus = (st) => { if (st === 'open' && !settled) { settled = true; resolve(); } if (prev) prev(st); };
+    t.reconnect = () => {
+      clearInterval(retryTimer);
+      retryTimer = setInterval(() => {
+        if (t.closed || (t.conn && t.conn.open)) { clearInterval(retryTimer); return; }
+        try { if (peer.disconnected) peer.reconnect(); connect(); } catch (e) {}
+      }, 3000);
+    };
+  });
+  return t;
+}
+
+/* =========================================================
+   SESSION -- reliable ordered messages on top of any transport:
+   every message carries a sequence number and stays in an outbox, so after
+   a dropped connection the peer asks to replay what it missed ('resume').
+   Heartbeat pings detect silence; a session that stays down for
+   PVP_RECONNECT_WINDOW_MS is lost.
+========================================================= */
+function makePvpSession(transport, h) {
+  const S = { transport, seqOut: 0, lastIn: 0, outbox: [], lastHeard: Date.now(), status: 'connecting', downSince: 0, timer: null };
+  const raw = (o) => { try { transport.send(JSON.stringify(o)); } catch (e) {} };
+  transport.onmessage = (str) => {
+    S.lastHeard = Date.now();
+    if (S.status === 'down') S.up();
+    let o; try { o = JSON.parse(str); } catch (e) { return; }
+    if (!o || typeof o !== 'object') return;
+    if (window.__gwaDev && __gwaDev.netLog) __gwaDev.netLog.push(str);
+    if (o.c === 'ping') { raw({ c: 'pong' }); return; }
+    if (o.c === 'pong') return;
+    if (o.c === 'resume') { S.outbox.filter(e => e.seq > o.last).forEach(raw); return; }
+    if (o.c === 'bye') { h.onBye && h.onBye(); return; }
+    if (typeof o.seq !== 'number') return;
+    if (o.seq <= S.lastIn) return;                                   // duplicate (replayed)
+    if (o.seq !== S.lastIn + 1) { raw({ c: 'resume', last: S.lastIn }); return; } // gap: ask for a replay
+    S.lastIn = o.seq;
+    try { h.onMessage(o.m); } catch (e) { console.error(e); }
+  };
+  transport.onstatus = (st) => {
+    if (st === 'open') {
+      if (S.status === 'connecting') {
+        S.status = 'ok'; S.lastHeard = Date.now();
+        S.timer = setInterval(tick, PVP_HEARTBEAT_MS);
+        h.onOpen && h.onOpen();
+      }
+    } else if (st === 'down') S.down();
+    else if (st === 'up') { S.lastHeard = Date.now(); S.up(); }
+  };
+  const tick = () => {
+    raw({ c: 'ping' });
+    const now = Date.now();
+    if (S.status === 'ok' && now - S.lastHeard > PVP_SILENCE_MS) S.down();
+    if (S.status === 'down' && now - S.downSince > PVP_RECONNECT_WINDOW_MS) { S.status = 'lost'; clearInterval(S.timer); h.onLost && h.onLost(); }
+  };
+  S.down = () => {
+    if (S.status !== 'ok') return;
+    S.status = 'down'; S.downSince = Date.now();
+    h.onDown && h.onDown();
+    if (transport.reconnect) { try { transport.reconnect(); } catch (e) {} }
+  };
+  S.up = () => {
+    if (S.status !== 'down') return;
+    S.status = 'ok'; S.lastHeard = Date.now();
+    raw({ c: 'resume', last: S.lastIn });
+    h.onUp && h.onUp();
+  };
+  S.send = (m) => { const e = { seq: ++S.seqOut, m }; S.outbox.push(e); raw(e); };
+  S.close = (sayBye) => {
+    if (sayBye) raw({ c: 'bye' });
+    clearInterval(S.timer); S.status = 'closed';
+    setTimeout(() => { try { transport.close(); } catch (e) {} }, sayBye ? 200 : 0);
+  };
+  return S;
+}
+
+/* =========================================================
+   MATCH
+========================================================= */
+let pvp = null;
+function pvpActive() { return !!(pvp && state && state.pvpSeats); }
+function pvpSend(m) { if (pvp && pvp.session && pvp.session.status !== 'closed') pvp.session.send(m); }
+function pvpBegin(transport, role, extra) {
+  pvpTeardown(false);
+  pvp = { role, transport, name: pvpMyName(), oppName: 'Opponent', hello: null, my: null, opp: null,
+          actionQueue: [], localQueue: [], reveals: [], revealWaiters: [], hashes: { mine: {}, theirs: {} },
+          revealedOpp: [], ended: false, rematch: { me: false, them: false }, oppLeft: false, desyncShown: false,
+          headSince: 0, gameNo: 0, ...(extra || {}) };
+  pvp.session = makePvpSession(transport, {
+    onOpen: () => pvpSend({ t: 'hello', proto: PVP_PROTOCOL, build: pvpBuildHash(), name: pvp.name }),
+    onMessage: pvpOnMessage, onDown: pvpOnDown, onUp: pvpOnUp, onLost: pvpOnLost, onBye: () => pvpOpponentLeft(),
+  });
+  if (!pvp.pump) pvp.pump = setInterval(pvpPump, 50);
+  window.addEventListener('beforeunload', pvpOnUnload);
+  window.addEventListener('pagehide', pvpOnUnload);
+  return pvp;
+}
+function pvpOnUnload() { if (pvp && pvp.session) { try { pvp.session.close(true); } catch (e) {} } }
+function pvpTeardown(sayBye) {
+  if (!pvp) return;
+  const p = pvp;
+  pvp = null;
+  clearInterval(p.pump);
+  try { p.session && p.session.close(sayBye); } catch (e) {}
+  window.removeEventListener('beforeunload', pvpOnUnload);
+  window.removeEventListener('pagehide', pvpOnUnload);
+  pvpSetNetBanner(null);
+  pvpSetWaitBanner(null);
+  if (typeof __gwaDev !== 'undefined') __gwaDev.useDefaultControllers();
+  document.body.classList.remove('pvpMode');
+}
+function pvpCloseDialogs() {
+  while (gwDlgStack.length) { const d = gwDlgStack[gwDlgStack.length - 1]; d.programmatic = true; d.close(); }
+}
+
+function pvpOnMessage(m) {
+  if (!pvp || !m || typeof m.t !== 'string') return;
+  switch (m.t) {
+    case 'hello': {
+      pvp.hello = m;
+      pvp.oppName = pvpCleanName(m.name);
+      if (m.proto !== PVP_PROTOCOL || m.build !== pvpBuildHash()) {
+        pvpFail('Different game versions',
+          `${pvp.oppName} is running a different version of Gwent Adventure. Both players need exactly the same game file (download it again, or both use the same link) and then try again.`);
+        return;
+      }
+      pvpCloseDialogs();
+      pvpChooseDeck();
+      break;
+    }
+    case 'commit':
+      if (typeof m.deckHash !== 'string' || typeof m.seedHash !== 'string' || !(m.deckCount > 0 && m.deckCount <= 40)) { pvpFail('Connection problem', 'Received an invalid message from your friend.'); return; }
+      pvp.opp = { deckHash: m.deckHash, deckCount: m.deckCount, seedHash: m.seedHash, r: null, game: m.game };
+      pvpMaybeRevealSeed();
+      break;
+    case 'seed':
+      if (!pvp.opp || sha256Hex('seed:' + m.r) !== pvp.opp.seedHash) { pvpFail('Connection problem', 'Your friend\'s random seed did not match what they committed to. The match was stopped.'); return; }
+      pvp.opp.r = String(m.r);
+      pvpMaybeStart();
+      break;
+    case 'act': if (m.a && typeof m.a === 'object') pvp.actionQueue.push(m.a); break;
+    case 'reveal': pvp.reveals.push(m); pvpDrainReveals(); break;
+    case 'hash': pvp.hashes.theirs[m.k] = m.h; pvpCompareHash(m.k); break;
+    case 'deck': pvpVerifyOppDeck(m); break;
+    case 'concede': pvpOpponentConceded(); break;
+    case 'rematch': pvp.rematch.them = true; pvpMaybeRematch(); break;
+    case 'leave': pvpOpponentLeft(); break;
+  }
+}
+function pvpFail(title, text) {
+  console.warn('[PvP]', title, text);
+  pvpTeardown(true);
+  pvpCloseDialogs();
+  const inGame = !!state;
+  gwDialog({ title, body: text, buttons: [{ label: inGame ? 'Main Menu' : 'OK', onClick: () => { if (state) exitToMainMenu(); } }],
+             onClose: () => { if (state) exitToMainMenu(); } });
+}
+
+/* ---- deck choice, commitments and the shared seed ---- */
+function pvpChooseDeck() {
+  openSelectDeck((ids) => pvpCommitDeck(ids), {
+    title: `Select deck (vs ${pvp.oppName})`,
+    onCancel: () => pvpQuit(),
+  });
+}
+function pvpDeckHash(ids, salt) { return sha256Hex('deck:' + ids.slice().sort().join(',') + '|' + salt); }
+function pvpCommitDeck(choice) {
+  if (!pvp) return;
+  const privSeed = randomSeedString() + randomSeedString();
+  const forced = window.__gwaNextDecks && window.__gwaNextDecks.player;
+  if (forced) window.__gwaNextDecks = null;
+  const deckIds = forced ? forced.slice() : choice ? choice.slice() : buildDeck(makeRng('deck:' + privSeed)).map(c => c.id);
+  const salt = randomSeedString() + randomSeedString();
+  const r = randomSeedString() + randomSeedString();
+  pvp.gameNo++;
+  pvp.my = { choice, deckIds, salt, privSeed, r, deckHash: pvpDeckHash(deckIds, salt), seedHash: sha256Hex('seed:' + r), seedSent: false };
+  pvpSend({ t: 'commit', deckHash: pvp.my.deckHash, deckCount: deckIds.length, seedHash: pvp.my.seedHash, game: pvp.gameNo });
+  if (!state) pvpShowWaiting(`Waiting for ${pvp.oppName} to choose a deck…`);
+  pvpMaybeRevealSeed();
+}
+// Commit-reveal: my seed is only revealed once the friend's commitment is
+// in, so neither side can pick the shared seed on its own.
+function pvpMaybeRevealSeed() {
+  if (!pvp || !pvp.my || !pvp.opp || pvp.my.seedSent) return;
+  pvp.my.seedSent = true;
+  pvpSend({ t: 'seed', r: pvp.my.r });
+  pvpMaybeStart();
+}
+function pvpMaybeStart() {
+  if (!pvp || !pvp.my || !pvp.my.seedSent || !pvp.opp || !pvp.opp.r) return;
+  const hostR = pvp.role === 'host' ? pvp.my.r : pvp.opp.r, guestR = pvp.role === 'host' ? pvp.opp.r : pvp.my.r;
+  pvpStartGame(sha256Hex('shared:' + hostR + '|' + guestR));
+}
+function pvpShowWaiting(text) {
+  pvpCloseDialogs();
+  const p = document.createElement('p'); p.id = 'pvpWaitingText'; p.textContent = text;
+  const dlg = gwDialog({ title: 'Challenge a Friend', body: p, buttons: [{ label: 'Leave', secondary: true, onClick: () => { pvpQuit(); } }],
+                         onClose: () => { if (!dlg.programmatic && pvp && !state) pvpQuit(); } });
+}
+
+function newPvpGameState(sharedSeed) {
+  const myL = pvp.role === 'host' ? 'h' : 'g', oppL = pvp.role === 'host' ? 'g' : 'h';
+  const seats = { player: myL, ai: oppL };
+  RNG.shared = makeRng('shared:' + sharedSeed);
+  RNG.priv.player = makeRng('priv:' + pvp.my.privSeed);
+  RNG.priv.ai = makeRng('remote-private:' + sharedSeed); // the friend's real stream is unknown here
+  RNG.brain = makeRng('brain:unused');
+  tokenUidCounter = 0;
+  pendingKills = 0;
+  nextCardUid.pending = { player: 0, ai: 0 };
+  nextCardUid.pvpSeats = seats;
+  const hostStarts = RNG.shared.next() < 0.5;
+  const startingPlayer = (hostStarts === (pvp.role === 'host')) ? 'player' : 'ai';
+  const mine = buildCustomDeck(pvp.my.deckIds);
+  let myDeck;
+  if (window.__gwaDev && __gwaDev.pvpNoShuffle) { myDeck = mine; myDeck.forEach(c => { c.uid = nextCardUid('player'); c.owner = 'player'; }); }
+  else myDeck = finalizeDeck('player', mine);
+  const oppDeck = Array.from({ length: pvp.opp.deckCount }, () => ({ uid: nextCardUid('ai'), hidden: true, owner: 'ai' }));
+  nextCardUid.pvpSeats = null;
+  const blank = () => ({ hand: [], board: [], graveyard: [], passed: false, mulliganUsed: false, actedThisTurn: false, orderUsedThisTurn: false, ordersUsedThisTurn: 0, firstPlayDone: false });
+  return {
+    seeds: { shared: sharedSeed, player: pvp.my.privSeed, ai: null },
+    pvpSeats: seats, oppName: pvp.oppName, myName: pvp.name,
+    drawCounters: { player: 0, ai: 0 }, tokenCounters: { player: 0, ai: 0 },
+    uidCounters: nextCardUid.pending, actionLog: [],
+    startingPlayer, turnPlayer: startingPlayer, round: 1, roundResults: [], roundScores: [], scores: { player: 0, ai: 0 },
+    players: { player: { ...blank(), deck: myDeck }, ai: { ...blank(), deck: oppDeck } },
+    activeTurn: null, turnCounter: 0, phase: 'mulligan', log: [],
+  };
+}
+function pvpStartGame(sharedSeed) {
+  pvpCloseDialogs();
+  if (!state) {
+    document.getElementById('titleScreen').style.display = 'none';
+    MenuMusic.fadeOutAndStop(1500);
+    Music.start(1500);
+  } else { Music.stop(); Music.start(); }
+  closeNewGameModal();
+  document.getElementById('overlay').style.display = 'none';
+  pvp.ended = false; // (the friend's first actions for this game may already be queued)
+  pvp.localQueue = []; pvp.hashes = { mine: {}, theirs: {} }; pvp.revealedOpp = []; pvp.desyncShown = false;
+  pvp.rematch = { me: false, them: false }; pvp.oppDeckCheck = null; pvp.deckSent = false; pvp.headSince = 0;
+  for (const k in pendingBoardPick) pendingBoardPick[k] = null;
+  pendingPick = null;
+  controllers.player = (window.__gwaDev && __gwaDev.pvpBot) ? makeBotController('player', __gwaDev.pvpBot) : LocalHumanController;
+  controllers.ai = makeRemoteController(pvp);
+  document.body.classList.add('pvpMode');
+  state = newPvpGameState(sharedSeed);
+  drawCards('player', 4);
+  drawCards('ai', 4);
+  logMsg(`Match against ${escapeHtml(pvp.oppName)} started. ${state.startingPlayer === 'player' ? 'You go' : 'Opponent goes'} first and will win any power ties this game.`);
+  render();
+  showMulliganOverlay();
+}
+
+/* ---- actions over the wire ---- */
+// Can `a` be applied right now without racing an animation / reaction?
+// (Both clients apply every action at such a settled point, so the order of
+// state changes is identical on both.)
+function pvpReadyFor(a) {
+  const t = a.type;
+  if (t === 'mulligan' || t === 'mulliganDone') return true;
+  if (pendingKills > 0 || document.querySelector('.projectile, .flyingCard:not(.heldCard)')) return false;
+  if (t === 'target' || t === 'pick' || t === 'finish' || t === 'cancel') return true;
+  return !buffReactionsBusy() && pendingPlayTokenSpawns === 0 && !coinBusy && !allBoardCards().some(c => c.floatingSpecial);
+}
+// What the friend's client gets for one of my actions: hidden identities are
+// never sent -- except the card I'm playing, which becomes public right now.
+function pvpOutgoing(a) {
+  const out = { ...a };
+  if (a.type === 'play') {
+    const c = state.players.player.hand.find(x => x.uid === a.uid);
+    if (c && c.id) out.reveal = { id: c.id };
+  }
+  if (a.type === 'pick' && pendingPick && pendingPick.zone === 'deck' && pendingPick.pile === 'player' && a.uid) out.uid = '?';
+  return out;
+}
+function pvpSubmitLocal(action) {
+  if (!validateAction('player', action)) return false;
+  if (!pvpReadyFor(action) || pvp.localQueue.length) { pvp.localQueue.push(action); return true; }
+  pvpCommitLocal(action);
+  return true;
+}
+function pvpCommitLocal(action) {
+  const out = pvpOutgoing(action);
+  const logged = { ...out }; delete logged.reveal;
+  recordAction('player', logged);
+  pvpSend({ t: 'act', a: out });
+  applyAction('player', action);
+}
+function pvpRevealHandCard(side, uid, id) {
+  const hand = state.players[side].hand, i = hand.findIndex(c => c.uid === uid);
+  if (i === -1 || !hand[i].hidden) return;
+  const base = CARD_DB[id];
+  if (!base || base.tutorialOnly || base.tier === 'token') { pvp.cheat = (pvp.cheat || '') + ` invalid card "${id}" played;`; return; }
+  hand[i] = { ...base, uid, basePower: base.power, owner: side };
+  pvp.revealedOpp.push(id);
+}
+function pvpPump() {
+  if (!pvp) return;
+  pvpUpdateWaitBanner();
+  if (!state || !state.pvpSeats || pvp.ended || state.phase === 'gameEnd') return;
+  // the friend's actions, in order, each once this client reaches the same point
+  for (let guard = 0; guard < 8 && pvp.actionQueue.length; guard++) {
+    const a = pvp.actionQueue[0];
+    if (a.type === 'play' && a.reveal && a.reveal.id) pvpRevealHandCard('ai', a.uid, a.reveal.id);
+    const clean = { ...a }; delete clean.reveal;
+    if (!validateAction('ai', clean) || !pvpReadyFor(clean)) {
+      // a local gate (round-end overlay, mulligan) legitimately holds it;
+      // anything else that never becomes valid means the games diverged
+      const gated = state.phase !== 'playing' || pvpLocalGateOpen();
+      if (!pvp.headSince || gated) pvp.headSince = Date.now();
+      else if (Date.now() - pvp.headSince > 25000 && !pvp.desyncShown) {
+        pvpDesync('An action from your friend could not be applied here: ' + JSON.stringify(clean));
+      }
+      break;
+    }
+    pvp.headSince = 0;
+    pvp.actionQueue.shift();
+    recordAction('ai', clean);
+    applyAction('ai', clean);
+  }
+  // my own actions that had to wait for an animation
+  for (let guard = 0; guard < 4 && pvp.localQueue.length; guard++) {
+    const a = pvp.localQueue[0];
+    if (!validateAction('player', a)) { pvp.localQueue.shift(); continue; }
+    if (!pvpReadyFor(a)) break;
+    pvp.localQueue.shift();
+    pvpCommitLocal(a);
+  }
+}
+function pvpLocalGateOpen() {
+  const ov = document.getElementById('overlay');
+  return !!(ov && ov.style.display !== 'none' && ov.style.display !== '');
+}
+
+/* ---- reveals of hidden cards (Maxii van Dekkar's top card) ---- */
+function pvpDeckTopReveal(side) {
+  const deck = state.players[side].deck;
+  if (side === 'player') {
+    const top = deck[deck.length - 1];
+    pvpSend({ t: 'reveal', key: 'deckTop', id: top ? top.id : null });
+    return Promise.resolve(top || null);
+  }
+  return new Promise(res => {
+    pvp.revealWaiters.push({ key: 'deckTop', resolve: (id) => {
+      const top = deck[deck.length - 1];
+      if (!top) { res(null); return; }
+      if (top.hidden && id && CARD_DB[id]) {
+        const real = { ...CARD_DB[id], uid: top.uid, basePower: CARD_DB[id].power, owner: top.owner || side };
+        deck[deck.length - 1] = real;
+        pvp.revealedOpp.push(id);
+        res(real);
+      } else res(top);
+    } });
+    pvpDrainReveals();
+  });
+}
+function pvpDrainReveals() {
+  if (!pvp) return;
+  while (pvp.reveals.length && pvp.revealWaiters.length) {
+    const w = pvp.revealWaiters.shift(), r = pvp.reveals.shift();
+    w.resolve(r.id);
+  }
+}
+
+/* ---- per-turn state hash ---- */
+function pvpCanonicalState() {
+  const R = sd => state.pvpSeats[sd] || '?';
+  const card = c => [c.uid, c.id || '?', c.power, c.orderUsed ? 1 : 0, c.owner ? R(c.owner) : ''].join(':');
+  const seat = sd => {
+    const p = state.players[sd];
+    return [R(sd), p.board.map(card).join(','), p.graveyard.map(c => c.uid + ':' + (c.id || '?')).join(','),
+            p.hand.map(c => c.uid).join(','), p.deck.length, p.passed ? 1 : 0, state.scores[sd]].join('|');
+  };
+  return [state.round, state.turnCounter, R(state.activeTurn), R(state.startingPlayer), ...seatOrder().map(seat)].join('#');
+}
+function pvpTurnBoundary() {
+  if (!pvpActive()) return;
+  state.pvpBoundaryNo = (state.pvpBoundaryNo || 0) + 1; // same count on both clients
+  const k = state.round + '.' + state.turnCounter + '.' + state.pvpBoundaryNo;
+  const canon = pvpCanonicalState();
+  pvp.hashes.mine[k] = sha256Hex(canon).slice(0, 20);
+  pvp.lastCanon = { k, canon };
+  pvpSend({ t: 'hash', k, h: pvp.hashes.mine[k] });
+  pvpCompareHash(k);
+}
+function pvpCompareHash(k) {
+  if (!pvp) return;
+  const a = pvp.hashes.mine[k], b = pvp.hashes.theirs[k];
+  if (!a || !b || a === b) return;
+  pvpDesync(`State hash mismatch at ${k}: mine ${a}, theirs ${b}. My state: ${pvp.lastCanon && pvp.lastCanon.k === k ? pvp.lastCanon.canon : '(n/a)'}`);
+}
+function pvpDesync(details) {
+  if (!pvp || pvp.desyncShown) return;
+  pvp.desyncShown = true;
+  console.error('[PvP] desync:', details);
+  gwDialog({ title: 'Out of sync', body: 'Your game and your friend\'s game no longer match (a bug, or a modified game). You can keep playing, but the result may not be fair. Details were written to the browser console.',
+    buttons: [{ label: 'Keep playing', secondary: true }, { label: 'End match', id: 'pvpDesyncEnd', onClick: () => { pvpQuit(); } }] });
+}
+
+/* ---- connection status UI ---- */
+function pvpEnsureBanner(id) {
+  let el = document.getElementById(id);
+  if (!el) { el = document.createElement('div'); el.id = id; document.body.appendChild(el); }
+  return el;
+}
+function pvpSetNetBanner(text, withButton) {
+  const el = pvpEnsureBanner('pvpNetBanner');
+  if (!text) { el.classList.remove('show'); return; }
+  el.innerHTML = '';
+  const s = document.createElement('span'); s.textContent = text; el.appendChild(s);
+  if (withButton) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'gwBtn small secondary'; b.textContent = 'End match';
+    b.addEventListener('click', () => pvpQuit());
+    el.appendChild(b);
+  }
+  el.classList.add('show');
+}
+function pvpSetWaitBanner(text) {
+  const el = pvpEnsureBanner('pvpWaitBanner');
+  if (!text) { el.classList.remove('show'); return; }
+  if (el.textContent !== text) el.textContent = text;
+  el.classList.add('show');
+}
+function pvpUpdateWaitBanner() {
+  if (!pvpActive() || pvp.ended || state.phase === 'gameEnd') { pvpSetWaitBanner(null); return; }
+  const n = pvp.oppName;
+  let t = null;
+  if (state.phase === 'mulligan') {
+    if (state.mulliganReady && state.mulliganReady.player && !state.mulliganReady.ai) t = `${n} is choosing their starting hand…`;
+  } else if (state.phase === 'playing') {
+    if (pendingBoardPick.ai || (pendingPick && pendingPick.side === 'ai')) t = `${n} is choosing a card…`;
+    else if (activeTargeting && activeTargeting.side === 'ai') t = `${n} is choosing a target…`;
+    else if (state.activeTurn === 'ai' && !state.players.ai.passed) t = `${n} is thinking…`;
+  }
+  if (pvp.session && pvp.session.status === 'down') t = null; // the connection banner takes that spot
+  pvpSetWaitBanner(t);
+  if (pvp.session && pvp.session.status === 'down') {
+    const left = Math.max(0, Math.ceil((PVP_RECONNECT_WINDOW_MS - (Date.now() - pvp.session.downSince)) / 1000));
+    pvpSetNetBanner(`Connection lost – reconnecting… (${left}s)`, true);
+  }
+}
+function pvpOnDown() { if (pvp) pvpSetNetBanner('Connection lost – reconnecting…', true); }
+function pvpOnUp() { pvpSetNetBanner(null); }
+function pvpOnLost() {
+  if (!pvp) return;
+  const n = pvp.oppName;
+  pvpTeardown(false);
+  pvpCloseDialogs();
+  gwDialog({ title: 'Connection lost', body: `The connection to ${n} could not be restored. The match has ended.`,
+             buttons: [{ label: state ? 'Main Menu' : 'OK', onClick: () => { if (state) exitToMainMenu(); } }], onClose: () => { if (state) exitToMainMenu(); } });
+}
+function pvpOpponentLeft() {
+  if (!pvp) return;
+  const n = pvp.oppName, atEnd = state && state.phase === 'gameEnd';
+  pvp.oppLeft = true;
+  if (atEnd) {
+    const rb = document.getElementById('pvpRematchBtn');
+    if (rb) { rb.disabled = true; rb.textContent = `${n} left`; }
+    pvpTeardown(false);
+    return;
+  }
+  pvpTeardown(false);
+  pvpCloseDialogs();
+  gwDialog({ title: 'Opponent left', body: `${n} left the game.`, buttons: [{ label: state ? 'Main Menu' : 'OK', onClick: () => { if (state) exitToMainMenu(); } }],
+             onClose: () => { if (state) exitToMainMenu(); } });
+}
+// Leave the match (menu, cancel, desync "End match").
+function pvpQuit() {
+  if (!pvp) { if (state) exitToMainMenu(); return; }
+  pvpSend({ t: 'leave' });
+  pvpTeardown(true);
+  pvpCloseDialogs();
+  exitToMainMenu();
+}
+
+/* ---- concede, game end, deck verification, rematch ---- */
+function pvpConcede() {
+  if (!pvpActive() || state.phase === 'gameEnd') return;
+  pvpSend({ t: 'concede' });
+  pvpFinishByConcede('player');
+}
+function pvpOpponentConceded() { if (pvpActive() && state.phase !== 'gameEnd') pvpFinishByConcede('ai'); }
+function pvpFinishByConcede(loser) {
+  cancelTargeting();
+  state.concededBy = loser;
+  state.phase = 'gameEnd';
+  logMsg(loser === 'player' ? 'You conceded the match.' : 'Opponent conceded the match.');
+  render();
+  showGameEnd();
+}
+function pvpOnGameEnd() {
+  if (!pvp) return;
+  pvp.ended = true;
+  if (!pvp.deckSent) {
+    pvp.deckSent = true;
+    let ids = pvp.my.deckIds.slice();
+    if (window.__gwaDev && __gwaDev.pvpTamperDeck) ids[0] = ids[0] === 'ballista' ? 'geralt' : 'ballista'; // test hook: cheat detection
+    pvpSend({ t: 'deck', ids, salt: pvp.my.salt });
+  }
+}
+// The friend's full deck list arrives at the end: it must match the hash
+// they committed to before the game, and contain every card they revealed.
+function pvpVerifyOppDeck(m) {
+  if (!pvp || !pvp.opp) return;
+  const ids = Array.isArray(m.ids) ? m.ids.map(String) : [];
+  const problems = [];
+  if (pvpDeckHash(ids, String(m.salt)) !== pvp.opp.deckHash || ids.length !== pvp.opp.deckCount) problems.push('their deck list does not match the one they committed to before the game');
+  const pool = {};
+  ids.forEach(id => { pool[id] = (pool[id] || 0) + 1; });
+  const missing = [];
+  pvp.revealedOpp.forEach(id => { if (pool[id]) pool[id]--; else missing.push(CARD_DB[id] ? CARD_DB[id].name : id); });
+  if (missing.length) problems.push('they played cards that are not in their deck (' + missing.join(', ') + ')');
+  if (pvp.cheat) problems.push(pvp.cheat);
+  pvp.oppDeckCheck = problems.length ? { ok: false, text: 'Warning: ' + pvp.oppName + "'s deck could not be verified – " + problems.join('; ') + '. They may have cheated.' }
+                                     : { ok: true, text: pvp.oppName + "'s deck was verified." };
+  if (!problems.length) {} else console.warn('[PvP] deck check failed', problems);
+  const el = document.getElementById('pvpDeckCheck');
+  if (el) { el.textContent = pvp.oppDeckCheck.text; el.classList.toggle('bad', !pvp.oppDeckCheck.ok); }
+}
+function pvpGameEndHtml(won) {
+  const n = escapeHtml(pvp ? pvp.oppName : (state.oppName || 'Opponent'));
+  const why = state.concededBy === 'ai' ? `<p style="color:var(--muted)">${n} conceded.</p>` : state.concededBy === 'player' ? `<p style="color:var(--muted)">You conceded.</p>` : '';
+  const check = pvp && pvp.oppDeckCheck ? pvp.oppDeckCheck : { ok: true, text: `Verifying ${n}'s deck…` };
+  return { why, check, n };
+}
+function pvpMaybeRematch() {
+  if (!pvp) return;
+  const rb = document.getElementById('pvpRematchBtn');
+  if (pvp.rematch.them && !pvp.rematch.me && rb) rb.textContent = `Rematch (${pvp.oppName} wants one!)`;
+  if (!pvp.rematch.me || !pvp.rematch.them) return;
+  pvp.rematch = { me: false, them: false };
+  pvp.opp = null;
+  pvp.actionQueue = []; pvp.localQueue = []; pvp.reveals = []; pvp.revealWaiters = [];
+  const choice = pvp.my ? pvp.my.choice : null;
+  pvp.my = null;
+  pvpCommitDeck(choice); // same deck choice, fresh salt and seed
+}
+function pvpRequestRematch() {
+  if (!pvp || pvp.oppLeft) return;
+  pvp.rematch.me = true;
+  pvpSend({ t: 'rematch' });
+  const rb = document.getElementById('pvpRematchBtn');
+  if (rb) { rb.disabled = true; rb.textContent = `Waiting for ${pvp.oppName}…`; }
+  pvpMaybeRematch();
+}
+
+/* =========================================================
+   PVP: CONNECTION POPUPS
+========================================================= */
+function pvpCopyBox(value, multiline) {
+  const wrap = document.createElement('div'); wrap.className = 'pvpCopyRow';
+  const box = document.createElement(multiline ? 'textarea' : 'input');
+  if (!multiline) box.type = 'text';
+  box.readOnly = true; box.value = value; box.className = 'pvpCodeBox' + (multiline ? ' multi' : '');
+  box.addEventListener('focus', () => box.select());
+  box.addEventListener('click', () => box.select());
+  const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'gwBtn small'; btn.textContent = 'Copy';
+  const note = document.createElement('span'); note.className = 'gwNote';
+  btn.addEventListener('click', async () => {
+    box.focus(); box.select();
+    let ok = false;
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(box.value); ok = true; } } catch (e) {}
+    if (!ok) { try { ok = document.execCommand('copy'); } catch (e) {} }
+    note.textContent = ok ? 'Copied!' : 'Select the code and press Ctrl+C to copy it.';
+  });
+  wrap.append(box, btn, note);
+  return { wrap, box, note };
+}
+function pvpStatusLine(text) { const p = document.createElement('p'); p.className = 'pvpStatus'; p.textContent = text || ''; return p; }
+
+function openChallengeFriend() {
+  const body = document.createElement('div'); body.className = 'pvpBody';
+  const nameRow = document.createElement('label'); nameRow.className = 'pvpNameRow';
+  nameRow.innerHTML = '<span>Your name</span>';
+  const nameInp = document.createElement('input'); nameInp.type = 'text'; nameInp.id = 'pvpNameInput'; nameInp.maxLength = 20; nameInp.value = pvpMyName();
+  nameInp.addEventListener('change', () => pvpSaveName(nameInp.value));
+  nameRow.appendChild(nameInp);
+  const intro = document.createElement('p'); intro.className = 'gwNote';
+  intro.textContent = 'Play against a friend over the internet. One of you hosts and sends the room code, the other joins with it.';
+  const hostBtn = document.createElement('button'); hostBtn.type = 'button'; hostBtn.className = 'newGameOption'; hostBtn.id = 'pvpHostBtn'; hostBtn.textContent = 'Host a game';
+  const joinBtn = document.createElement('button'); joinBtn.type = 'button'; joinBtn.className = 'newGameOption'; joinBtn.id = 'pvpJoinBtn'; joinBtn.textContent = 'Join a game';
+  const links = document.createElement('div'); links.className = 'pvpLinks';
+  const manual = document.createElement('a'); manual.href = '#'; manual.id = 'pvpManualLink'; manual.textContent = 'Advanced: connect with manual codes';
+  links.appendChild(manual);
+  let localLink = null;
+  if (developerModeEnabled) {
+    localLink = document.createElement('a'); localLink.href = '#'; localLink.id = 'pvpLocalLink'; localLink.textContent = 'Local test (two tabs)';
+    links.appendChild(localLink);
+  }
+  body.append(nameRow, intro, hostBtn, joinBtn, links);
+  const dlg = gwDialog({ title: 'Challenge a Friend', body, buttons: [] });
+  const go = (fn) => (e) => { if (e) e.preventDefault(); pvpSaveName(nameInp.value); dlg.programmatic = true; dlg.close(); fn(); };
+  hostBtn.addEventListener('click', go(() => openPvpHost('online')));
+  joinBtn.addEventListener('click', go(() => openPvpJoin('online')));
+  manual.addEventListener('click', go(() => openPvpManual()));
+  if (localLink) localLink.addEventListener('click', go(() => openPvpLocalChooser()));
+  [hostBtn, joinBtn].forEach(b => b.addEventListener('mouseenter', () => SFX.buttonHover()));
+  setTimeout(() => nameInp.focus(), 0);
+}
+function openPvpLocalChooser() {
+  const body = document.createElement('div'); body.className = 'pvpBody';
+  body.appendChild(pvpStatusLine('Developer test: play both sides yourself in two tabs of this browser. Host in one tab, then join with the code in the other.'));
+  gwDialog({ title: 'Local test (two tabs)', body, buttons: [
+    { label: 'Join', id: 'pvpLocalJoinBtn', secondary: true, onClick: () => { openPvpJoin('local'); } },
+    { label: 'Host', id: 'pvpLocalHostBtn', onClick: () => { openPvpHost('local'); } },
+  ] });
+}
+// Dialog whose X / Cancel tears the pending connection down (unless it was
+// closed by the code itself once the connection is up).
+function pvpConnDialog(title, body, extraButtons) {
+  const dlg = gwDialog({ title, body, buttons: (extraButtons || []).concat([{ label: 'Cancel', secondary: true, id: 'pvpCancelBtn' }]),
+    onClose: () => { if (!dlg.programmatic && pvp && !state) pvpTeardown(true); } });
+  return dlg;
+}
+async function openPvpHost(mode) {
+  const body = document.createElement('div'); body.className = 'pvpBody';
+  const status = pvpStatusLine(mode === 'local' ? 'Creating a local room…' : 'Creating a room…');
+  body.appendChild(status);
+  const dlg = pvpConnDialog(mode === 'local' ? 'Host a local test game' : 'Host a game', body);
+  dlg.box.id = 'pvpHostDialog';
+  try {
+    let transport, code;
+    if (mode === 'local') {
+      code = pvpRandomCode(4);
+      transport = makeLocalTransport(code, true);
+    } else {
+      await pvpLoadPeerJs();
+      transport = makePeerTransport(true);
+      pvpBegin(transport, 'host');
+      code = await transport.host();
+    }
+    if (!dlg.el.isConnected) { try { transport.close(); } catch (e) {} return; }
+    if (mode === 'local') pvpBegin(transport, 'host');
+    status.textContent = 'Your room code:';
+    const cb = pvpCopyBox(code, false); cb.box.id = 'pvpRoomCode'; cb.box.classList.add('roomCode');
+    body.appendChild(cb.wrap);
+    body.appendChild(pvpStatusLine(mode === 'local' ? 'Open the game in another tab, choose Local test → Join and enter this code.' :
+      'Send this code to your friend. Waiting for them to join…'));
+    const spin = document.createElement('div'); spin.className = 'pvpSpinner'; body.appendChild(spin);
+  } catch (e) {
+    status.textContent = e.message || String(e);
+    status.classList.add('gwErr');
+    pvpTeardown(false);
+  }
+}
+function openPvpJoin(mode) {
+  const body = document.createElement('div'); body.className = 'pvpBody';
+  body.appendChild(pvpStatusLine('Enter the room code your friend sent you:'));
+  const inp = document.createElement('input'); inp.type = 'text'; inp.id = 'pvpJoinCode'; inp.maxLength = 12; inp.className = 'pvpCodeBox roomCode';
+  inp.autocomplete = 'off'; inp.spellcheck = false;
+  body.appendChild(inp);
+  const status = pvpStatusLine(''); body.appendChild(status);
+  let busy = false;
+  const dlg = pvpConnDialog(mode === 'local' ? 'Join a local test game' : 'Join a game', body, [{ label: 'Join', id: 'pvpJoinGo', onClick: () => { doJoin(); return false; } }]);
+  dlg.box.id = 'pvpJoinDialog';
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); });
+  setTimeout(() => inp.focus(), 0);
+  async function doJoin() {
+    if (busy) return;
+    const code = pvpCleanCode(inp.value);
+    if (code.length < 4) { status.textContent = 'Please enter the code.'; status.classList.add('gwErr'); return; }
+    busy = true; status.classList.remove('gwErr');
+    status.textContent = 'Connecting…';
+    try {
+      if (mode === 'local') {
+        const transport = makeLocalTransport(code, false);
+        pvpBegin(transport, 'guest');
+        setTimeout(() => {
+          if (pvp && pvp.transport === transport && !pvp.hello && pvp.session.status === 'connecting') {
+            status.textContent = 'No local game found with that code (is the host tab still open?).'; status.classList.add('gwErr');
+            pvpTeardown(false); busy = false;
+          }
+        }, 6000);
+      } else {
+        await pvpLoadPeerJs();
+        const transport = makePeerTransport(false);
+        pvpBegin(transport, 'guest');
+        await transport.join(code);
+      }
+      status.textContent = 'Connected! Getting ready…';
+    } catch (e) {
+      status.textContent = e.message || String(e); status.classList.add('gwErr');
+      pvpTeardown(false); busy = false;
+    }
+  }
+}
+function openPvpManual() {
+  const body = document.createElement('div'); body.className = 'pvpBody';
+  body.appendChild(pvpStatusLine('No matchmaking service needed: you exchange two codes with your friend (e.g. in a chat). One of you hosts, the other joins.'));
+  gwDialog({ title: 'Manual connection', body, buttons: [
+    { label: 'I am joining', id: 'pvpManualJoinBtn', secondary: true, onClick: () => { openPvpManualJoin(); } },
+    { label: 'I am hosting', id: 'pvpManualHostBtn', onClick: () => { openPvpManualHost(); } },
+  ] });
+}
+async function openPvpManualHost() {
+  const body = document.createElement('div'); body.className = 'pvpBody';
+  const s1 = pvpStatusLine('Creating your invite code…'); body.appendChild(s1);
+  const dlg = pvpConnDialog('Manual connection – host', body);
+  dlg.box.id = 'pvpManualHostDialog';
+  try {
+    const transport = makeManualTransport();
+    pvpBegin(transport, 'host');
+    const offer = await transport.createOffer();
+    if (!dlg.el.isConnected) return;
+    s1.textContent = '1. Send this invite code to your friend:';
+    const cb = pvpCopyBox(offer, true); cb.box.id = 'pvpOfferCode'; body.appendChild(cb.wrap);
+    body.appendChild(pvpStatusLine('2. Paste the reply code your friend sends back:'));
+    const ans = document.createElement('textarea'); ans.id = 'pvpAnswerInput'; ans.className = 'pvpCodeBox multi'; body.appendChild(ans);
+    const st = pvpStatusLine(''); body.appendChild(st);
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'gwBtn'; btn.id = 'pvpAnswerGo'; btn.textContent = 'Connect';
+    body.appendChild(btn);
+    btn.addEventListener('click', async () => {
+      st.classList.remove('gwErr');
+      try { await transport.acceptAnswer(ans.value); st.textContent = 'Connecting…'; btn.disabled = true; }
+      catch (e) { st.textContent = e.message || String(e); st.classList.add('gwErr'); }
+    });
+  } catch (e) { s1.textContent = 'Could not create a connection: ' + (e.message || e); s1.classList.add('gwErr'); pvpTeardown(false); }
+}
+function openPvpManualJoin() {
+  const body = document.createElement('div'); body.className = 'pvpBody';
+  body.appendChild(pvpStatusLine('1. Paste the invite code your friend sent you:'));
+  const inp = document.createElement('textarea'); inp.id = 'pvpOfferInput'; inp.className = 'pvpCodeBox multi'; body.appendChild(inp);
+  const st = pvpStatusLine(''); body.appendChild(st);
+  const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'gwBtn'; btn.id = 'pvpOfferGo'; btn.textContent = 'Create reply code';
+  body.appendChild(btn);
+  const dlg = pvpConnDialog('Manual connection – join', body);
+  dlg.box.id = 'pvpManualJoinDialog';
+  btn.addEventListener('click', async () => {
+    st.classList.remove('gwErr');
+    btn.disabled = true;
+    try {
+      const transport = makeManualTransport();
+      pvpBegin(transport, 'guest');
+      const answer = await transport.acceptOffer(inp.value);
+      if (!dlg.el.isConnected) return;
+      st.textContent = '2. Send this reply code back to your friend:';
+      const cb = pvpCopyBox(answer, true); cb.box.id = 'pvpAnswerCode'; body.appendChild(cb.wrap);
+      body.appendChild(pvpStatusLine('Waiting for your friend to connect…'));
+    } catch (e) { st.textContent = e.message || String(e); st.classList.add('gwErr'); btn.disabled = false; pvpTeardown(false); }
+  });
+}
 
 /* ---- Public vs private state (see docs/multiplayer.md) ----
    Private per side: hand, deck (draw pile) and its order, the private seed.
@@ -3533,6 +4602,7 @@ function newGameState() {
   tokenUidCounter = 0;
   pendingKills = 0;
   nextCardUid.pending = { player: 0, ai: 0 };
+  nextCardUid.pvpSeats = null;
   const startingPlayer = RNG.shared.next() < 0.5 ? 'player' : 'ai';
   // dev/test hook: window.__gwaNextDecks = { player?: [ids], ai?: [ids] } (consumed here)
   const forcedDecks = window.__gwaNextDecks || {};
@@ -6487,7 +7557,7 @@ function bothPassed() {
 function endTurn(side) {
   // called when the active side explicitly ends their turn (after playing/ordering) or passes
   SFX.coinToss();
-  if (bothPassed()) { endRound(); return; }
+  if (bothPassed()) { endRound(); if (state && state.pvpSeats) pvpTurnBoundary(); return; }
   healTemporaryDamage(); // damage that didn't kill anything heals up at the end of the turn
   let next = otherSide(side);
   if (state.players[next].passed) {
@@ -6516,6 +7586,7 @@ function endTurn(side) {
   } else if (state.phase === 'playing') {
     scheduleTurnStart();
   }
+  if (state.pvpSeats) pvpTurnBoundary();
 }
 
 function endRound() {
@@ -7180,6 +8251,7 @@ async function aiUseAvailableOrders(opts) {
 
 async function aiTakeTurn() {
   if (!state || state.phase !== 'playing' || state.activeTurn !== 'ai') return;
+  if (state.pvpSeats) return; // never in PvP: that seat belongs to the friend
   if (state.tutorial && !tutorialHandsOff) { tutorialScriptedAiTurn(); return; }
   const ai = state.players.ai;
   if (ai.passed) { endTurn('ai'); return; }
@@ -7451,8 +8523,15 @@ function flyCard(cardData, fromRect, toRect, onDone, opts) {
     });
   });
 
+  if (opts.flipFromBack) {
+    // the friend's card: starts as a card back and turns face up mid-flight
+    const back = document.createElement('div'); back.className = 'flipBack';
+    el.appendChild(back);
+    el.classList.add('flipIn');
+  }
   setTimeout(() => {
     if (opts.keepEl) {
+      el.classList.add('heldCard'); // parked (special card resolving) -- not "in flight" any more
       if (onDone) onDone(el);
     } else {
       el.remove();
@@ -9515,7 +10594,7 @@ function performInteractivePlay(side, uid, index) {
   if (fromRect && newEl) {
     const toRect = newEl.getBoundingClientRect();
     newEl.style.visibility = 'hidden';
-    flyCard(playedCard, fromRect, toRect, () => { newEl.style.visibility = ''; render(); go(); });
+    flyCard(playedCard, fromRect, toRect, () => { newEl.style.visibility = ''; render(); go(); }, { flipFromBack: !!state.pvpSeats });
   } else go();
 }
 
@@ -9898,6 +10977,7 @@ function applyMulliganDone(side) {
 }
 
 function aiMulligan() {
+  if (state.pvpSeats) return;
   const ai = state.players.ai;
   const handPower = ai.hand.reduce((s, c) => s + c.power, 0);
   const avgPossible = 4 * 5.375; // rough average card power across the deck
@@ -9921,8 +11001,8 @@ function showRoundEndOverlay(winner, onContinue) {
   box.classList.remove('mulliganBox', 'gameEndBox');
   overlay.style.display = 'flex';
   box.innerHTML = `
-    <h2 style="color:${winner === 'player' ? 'var(--accent)' : 'var(--bad)'}">${winner === 'player' ? 'You won the round!' : 'Opponent won the round'}</h2>
-    <p style="color:var(--muted)">Score — You: ${state.scores.player} | Opponent: ${state.scores.ai}</p>
+    <h2 style="color:${winner === 'player' ? 'var(--accent)' : 'var(--bad)'}">${winner === 'player' ? 'You won the round!' : oppLabel() + ' won the round'}</h2>
+    <p style="color:var(--muted)">Score — You: ${state.scores.player} | ${oppLabel()}: ${state.scores.ai}</p>
     <button id="roundContinueBtn">Continue to Round ${state.round}</button>
   `;
   document.getElementById('roundContinueBtn').addEventListener('click', () => {
@@ -9932,6 +11012,7 @@ function showRoundEndOverlay(winner, onContinue) {
 }
 
 function showGameEnd() {
+  if (state && state.pvpSeats) { showPvpGameEnd(); return; }
   const overlay = document.getElementById('overlay');
   const box = document.getElementById('overlayBox');
   box.classList.remove('mulliganBox');
@@ -10036,6 +11117,8 @@ document.getElementById('titleNewGameBtn').addEventListener('click', () => newGa
 document.getElementById('newGameCloseBtn').addEventListener('click', closeNewGameModal);
 newGameModal.addEventListener('click', (e) => { if (e.target === newGameModal) closeNewGameModal(); });
 document.getElementById('quickGameBtn').addEventListener('click', startQuickGameFromTitle);
+document.getElementById('challengeFriendBtn').addEventListener('click', () => { closeNewGameModal(); openChallengeFriend(); });
+document.getElementById('challengeFriendBtn').addEventListener('mouseenter', () => SFX.buttonHover());
 // hover sound only on the enabled option (disabled buttons get no mouse events)
 document.getElementById('quickGameBtn').addEventListener('mouseenter', () => SFX.buttonHover());
 
@@ -10628,7 +11711,9 @@ function startGameWithDeck(ids) {
   pendingCustomDeck = ids && ids.length ? ids : null;
   startNewGame();
 }
-function openSelectDeck(onPlay) {
+function openSelectDeck(onPlay, opts) {
+  opts = opts || {};
+  let played = false;
   const decks = readDecks();
   let sel = readLastDeck();
   if (sel !== 'random' && !decks.some(d => d.id === sel && deckComplete(d))) sel = 'random';
@@ -10650,7 +11735,9 @@ function openSelectDeck(onPlay) {
   paint();
   const body = document.createElement('div'); body.style.cssText = 'display:flex;flex-direction:column;gap:10px'; body.appendChild(list);
   if (!decks.length) { const h = document.createElement('p'); h.className = 'gwNote'; h.id = 'selectDeckHint'; h.textContent = 'Build decks from the main menu.'; body.appendChild(h); }
-  gwDialog({ title: 'Select deck', body, buttons: [{ label: 'Play', id: 'selectDeckPlay', onClick: () => {
+  const dlg = gwDialog({ title: opts.title || 'Select deck', body, onClose: () => { if (!played && !dlg.programmatic && opts.onCancel) opts.onCancel(); },
+    buttons: [{ label: 'Play', id: 'selectDeckPlay', onClick: () => {
+    played = true;
     writeLastDeck(sel);
     const d = decks.find(x => x.id === sel);
     onPlay(sel === 'random' || !d ? null : d.cards.slice());
@@ -10666,7 +11753,7 @@ const devWrap = document.getElementById('devWrap');
 const devToggle = document.getElementById('devToggle');
 const devMenu = document.getElementById('devMenu');
 function updateDevOptionsVisibility() {
-  const show = developerModeEnabled && !!state && !state.tutorial;
+  const show = developerModeEnabled && !!state && !state.tutorial && !state.pvpSeats;
   devWrap.classList.toggle('show', show);
   if (!show) { devMenu.classList.remove('open'); devToggle.classList.remove('open'); }
 }
@@ -10817,6 +11904,11 @@ document.addEventListener('click', (e) => {
   closeHamburgerMenu();
 });
 
+document.getElementById('menuConcedeBtn').addEventListener('click', () => {
+  closeHamburgerMenu();
+  if (!state || !state.pvpSeats || state.phase === 'gameEnd') return;
+  gwConfirm('Concede this match? Your friend wins.', () => pvpConcede(), 'Concede', 'Keep playing');
+});
 document.getElementById('menuMainMenuBtn').addEventListener('click', () => {
   closeHamburgerMenu();
   document.getElementById('mainMenuConfirmDialog').classList.add('show');
@@ -10829,7 +11921,40 @@ document.getElementById('mainMenuConfirmNo').addEventListener('click', () => {
   document.getElementById('mainMenuConfirmDialog').classList.remove('show');
 });
 
+function showPvpGameEnd() {
+  const overlay = document.getElementById('overlay');
+  const box = document.getElementById('overlayBox');
+  box.classList.remove('mulliganBox');
+  box.classList.add('gameEndBox');
+  const won = state.concededBy ? state.concededBy === 'ai' : state.scores.player > state.scores.ai;
+  const rows = state.roundScores.map((r, i) => `
+      <div class="roundScoreRow">
+        <span class="roundScoreLabel">Round ${i + 1}:</span>
+        <span class="roundScoreNum${r.winner === 'player' ? ' winnerNum' : ''}">${r.player}</span>
+        <span class="roundScoreDash">–</span>
+        <span class="roundScoreNum${r.winner === 'ai' ? ' winnerNum' : ''}">${r.ai}</span>
+      </div>`).join('');
+  const info = pvpGameEndHtml(won);
+  overlay.style.display = 'flex';
+  box.innerHTML = `
+    <h2 style="color:${won ? 'var(--good)' : 'var(--bad)'}">${won ? 'VICTORY!' : 'DEFEAT'}</h2>
+    ${info.why}
+    <p style="color:var(--muted)">Final score — You: ${state.scores.player} | ${info.n}: ${state.scores.ai}</p>
+    <div class="roundScoreTable">${rows}</div>
+    <p id="pvpDeckCheck" class="pvpDeckCheck${info.check.ok ? '' : ' bad'}">${escapeHtml(info.check.text)}</p>
+    <div class="gameEndButtons">
+      <button id="gameEndMainMenuBtn" class="secondary">Main Menu</button>
+      <button id="pvpRematchBtn"${pvp && !pvp.oppLeft ? '' : ' disabled'}>${pvp && !pvp.oppLeft ? 'Rematch' : 'Opponent left'}</button>
+    </div>
+  `;
+  document.getElementById('gameEndMainMenuBtn').addEventListener('click', () => pvpQuit());
+  document.getElementById('pvpRematchBtn').addEventListener('click', () => pvpRequestRematch());
+  if (pvp) { pvpOnGameEnd(); pvpMaybeRematch(); }
+}
+
 function exitToMainMenu() {
+  if (pvp) { pvpSend({ t: 'leave' }); pvpTeardown(true); }
+  for (const k in pendingBoardPick) pendingBoardPick[k] = null;
   state = null;
   Music.stop();
   MenuMusic.start();

@@ -172,8 +172,6 @@
   #libraryFooter button:disabled { opacity: .4; cursor: default; }
   #libraryModal.devPick #libraryGrid .card { cursor: pointer; }
   #libraryGrid .card.devSelected { outline: 3px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 18px 4px var(--accent); }
-  #libraryTokenFilter { display: none; }
-  #libraryModal.devPick #libraryTokenFilter { display: flex; }
 
   #logToggle {
     background: var(--panel);
@@ -1597,7 +1595,18 @@
     display: none;
     z-index: 5;
   }
-  #libraryFiltersMenu.show { display: block; }
+  #libraryFiltersMenu.show, #librarySortMenu.show { display: block; }
+  #libraryFiltersWrap, #librarySortWrap { position: relative; }
+  #librarySortBtn { background: #ffffff14; color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px 16px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  #librarySortBtn:hover { background: #ffffff22; }
+  #librarySortBtn::after { content: '▾'; font-size: 10px; }
+  #librarySortMenu { position: absolute; top: calc(100% + 6px); left: 0; background: var(--panel2); border: 1px solid var(--border-strong); border-radius: 8px; padding: 8px 0; min-width: 140px; box-shadow: 0 10px 24px #000a; display: none; z-index: 5; }
+  #librarySortMenu label { display: flex; align-items: center; gap: 8px; padding: 7px 16px; font-size: 13px; cursor: pointer; user-select: none; }
+  #librarySortMenu label:hover { background: #ffffff14; }
+  #librarySortMenu input { cursor: pointer; }
+  #libraryClearFilters { display: block; width: calc(100% - 24px); margin: 0 12px 6px; background: var(--btn2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+  #libraryClearFilters:hover { background: var(--btn2-hover); }
+  .libraryFilterDivider { height: 1px; background: var(--border); margin: 6px 12px; }
   #libraryFiltersMenu label {
     display: flex;
     align-items: center;
@@ -1957,10 +1966,24 @@
       <div id="libraryFiltersWrap">
         <button id="libraryFiltersBtn" type="button">Filters</button>
         <div id="libraryFiltersMenu">
-          <label><input type="checkbox" data-tier="bronze" checked> Bronze</label>
-          <label><input type="checkbox" data-tier="silver" checked> Silver</label>
-          <label><input type="checkbox" data-tier="gold" checked> Gold</label>
-          <label id="libraryTokenFilter"><input type="checkbox" data-tier="token" checked> Token</label>
+          <button type="button" id="libraryClearFilters">Clear filters</button>
+          <label><input type="checkbox" data-group="tier" data-key="bronze" checked> Bronze</label>
+          <label><input type="checkbox" data-group="tier" data-key="silver" checked> Silver</label>
+          <label><input type="checkbox" data-group="tier" data-key="gold" checked> Gold</label>
+          <div class="libraryFilterDivider"></div>
+          <label><input type="checkbox" data-group="faction" data-key="northern_realms"> Northern Realms</label>
+          <label><input type="checkbox" data-group="faction" data-key="skellige"> Skellige</label>
+          <label><input type="checkbox" data-group="faction" data-key="mahakam"> Mahakam</label>
+          <label><input type="checkbox" data-group="faction" data-key="monsters_of_velen"> Monsters</label>
+          <label><input type="checkbox" data-group="faction" data-key="neutral"> Neutral</label>
+        </div>
+      </div>
+      <div id="librarySortWrap">
+        <button id="librarySortBtn" type="button">Sort</button>
+        <div id="librarySortMenu">
+          <label><input type="checkbox" data-sort="az"> A-Z</label>
+          <label><input type="checkbox" data-sort="power"> Power</label>
+          <label><input type="checkbox" data-sort="color"> Color</label>
         </div>
       </div>
       <h2>Card Library</h2>
@@ -2176,35 +2199,35 @@
    what it does once abilities are implemented) — it currently counts
    as 0 power on the board. */
 const CARD_DB = {
-  cave_troll:        { id: 'cave_troll', name: 'Cave Troll', power: 4, tier: 'bronze', img: 'cards/cave_troll.jpg', abilities: [] },
-  trollololo:        { id: 'trollololo', name: 'Trollololo', power: 6, tier: 'silver', img: 'cards/trollololo.jpg', abilities: [] },
-  geralt:            { id: 'geralt', name: 'Geralt of Rivia', power: 8, tier: 'gold', img: 'cards/geralt.jpg', abilities: [] },
+  cave_troll:        { id: 'cave_troll', name: 'Cave Troll', power: 4, tier: 'bronze', faction: 'neutral', img: 'cards/cave_troll.jpg', abilities: [] },
+  trollololo:        { id: 'trollololo', name: 'Trollololo', power: 6, tier: 'silver', faction: 'neutral', img: 'cards/trollololo.jpg', abilities: [] },
+  geralt:            { id: 'geralt', name: 'Geralt of Rivia', power: 8, tier: 'gold', faction: 'neutral', img: 'cards/geralt.jpg', abilities: [] },
 
-  wagon:             { id: 'wagon', name: 'Wagon', power: 2, tier: 'bronze', img: 'cards/wagon.jpg',
+  wagon:             { id: 'wagon', name: 'Wagon', power: 2, tier: 'bronze', faction: 'neutral', img: 'cards/wagon.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, effect: (ctx, target) => applyPowerDelta(target, 3, ctx) } ] },
-  highwayman:        { id: 'highwayman', name: 'Highwayman', power: 2, tier: 'bronze', img: 'cards/highwayman.jpg', abilities: [], playTargetDamage: 2 },
-  mercenary_mauler:  { id: 'mercenary_mauler', name: 'Mercenary Mauler', power: 1, tier: 'bronze', img: 'cards/mercenary_mauler.jpg',
+  highwayman:        { id: 'highwayman', name: 'Highwayman', power: 2, tier: 'bronze', faction: 'neutral', img: 'cards/highwayman.jpg', abilities: [], playTargetDamage: 2 },
+  mercenary_mauler:  { id: 'mercenary_mauler', name: 'Mercenary Mauler', power: 1, tier: 'bronze', faction: 'neutral', img: 'cards/mercenary_mauler.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 4, effect: (ctx, target) => applyDamage(target, 4) } ] },
-  bomb_heaver:       { id: 'bomb_heaver', name: 'Bomb Heaver', power: 1, tier: 'bronze', img: 'cards/bomb_heaver.jpg', playTargetDamage: 1,
+  bomb_heaver:       { id: 'bomb_heaver', name: 'Bomb Heaver', power: 1, tier: 'bronze', faction: 'neutral', img: 'cards/bomb_heaver.jpg', playTargetDamage: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
-  angry_mob:         { id: 'angry_mob', name: 'Angry Mob', power: 2, tier: 'bronze', img: 'cards/angry_mob.jpg', abilities: [],
+  angry_mob:         { id: 'angry_mob', name: 'Angry Mob', power: 2, tier: 'bronze', faction: 'neutral', img: 'cards/angry_mob.jpg', abilities: [],
                        playTargetRemoveBuffs: true },
-  tridam_infantry:   { id: 'tridam_infantry', name: 'Tridam Infantry', power: 2, tier: 'bronze', img: 'cards/tridam_infantry.jpg',
+  tridam_infantry:   { id: 'tridam_infantry', name: 'Tridam Infantry', power: 2, tier: 'bronze', faction: 'neutral', img: 'cards/tridam_infantry.jpg',
                        abilities: [ { trigger: 'onAllyPlay', effect: buffTridamInfantry } ] },
 
-  dandelion:         { id: 'dandelion', name: 'Dandelion', power: 3, tier: 'silver', img: 'cards/dandelion.jpg',
+  dandelion:         { id: 'dandelion', name: 'Dandelion', power: 3, tier: 'silver', faction: 'neutral', img: 'cards/dandelion.jpg',
                        deckTopChoice: true,
                        abilities: [
                          { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 3, ctx) },
                        ] },
-  field_medic:       { id: 'field_medic', name: 'Field Medic', power: 2, tier: 'bronze', img: 'cards/field_medic.jpg',
+  field_medic:       { id: 'field_medic', name: 'Field Medic', power: 2, tier: 'bronze', faction: 'neutral', img: 'cards/field_medic.jpg',
                        abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze',
                                       filter: c => !c.special && c.power >= 1 } ] },
-  zoltan_chivay:     { id: 'zoltan_chivay', name: 'Zoltan Chivay', power: 2, tier: 'silver', img: 'cards/zoltan_chivay.jpg', playTargetDamage: 2,
+  zoltan_chivay:     { id: 'zoltan_chivay', name: 'Zoltan Chivay', power: 2, tier: 'silver', faction: 'neutral', img: 'cards/zoltan_chivay.jpg', playTargetDamage: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 2, ctx) } ] },
-  caretaker:         { id: 'caretaker', name: 'Caretaker', power: 2, tier: 'silver', img: 'cards/caretaker.jpg', abilities: [],
+  caretaker:         { id: 'caretaker', name: 'Caretaker', power: 2, tier: 'silver', faction: 'neutral', img: 'cards/caretaker.jpg', abilities: [],
                        discardChoice: 'bronze' },
-  roach:             { id: 'roach', name: 'Roach', power: 2, tier: 'silver', img: 'cards/roach.jpg',
+  roach:             { id: 'roach', name: 'Roach', power: 2, tier: 'silver', faction: 'neutral', img: 'cards/roach.jpg',
                        // Passive: whenever this card's owner plays a Gold card
                        // (from anywhere -- hand or a free/discard play alike),
                        // Roach automatically returns from THEIR discard pile
@@ -2216,18 +2239,18 @@ const CARD_DB = {
                        // killed again later, a further Gold play can bring it
                        // back again.
                        abilities: [ { trigger: 'passiveReturnOnGoldPlay' } ] },
-  scorch:            { id: 'scorch', name: 'Scorch', power: 0, tier: 'silver', img: 'cards/scorch.jpg', special: true,
+  scorch:            { id: 'scorch', name: 'Scorch', power: 0, tier: 'silver', faction: 'neutral', img: 'cards/scorch.jpg', special: true,
                        abilities: [ { trigger: 'onPlay', effect: resolveScorch } ] },
 
-  angouleme:         { id: 'angouleme', name: 'Angoulême', power: 2, tier: 'silver', img: 'cards/angouleme.jpg',
+  angouleme:         { id: 'angouleme', name: 'Angoulême', power: 2, tier: 'silver', faction: 'neutral', img: 'cards/angouleme.jpg',
                        abilities: [ { trigger: 'order', needsTarget: false, effect: (ctx) => applyPowerDelta(ctx.card, 6, ctx) } ] },
   // Play: Look at the top card of your deck. Deal damage equal to its power.
   // (see startDeckTopDamage -- reveals the top card beside its owner's deck
   // pile during targeting; the card stays on top of the deck)
-  maxii_van_dekkar:  { id: 'maxii_van_dekkar', name: 'Maxii van Dekkar', power: 3, tier: 'silver', img: 'cards/maxii_van_dekkar.jpg', abilities: [],
+  maxii_van_dekkar:  { id: 'maxii_van_dekkar', name: 'Maxii van Dekkar', power: 3, tier: 'silver', faction: 'neutral', img: 'cards/maxii_van_dekkar.jpg', abilities: [],
                        playDamageFromDeckTop: true },
-  renfri:            { id: 'renfri', name: 'Renfri', power: 3, tier: 'silver', img: 'cards/renfri.jpg', abilities: [], playTargetDamage: 3 },
-  falibor:           { id: 'falibor', name: 'Falibor', power: 4, tier: 'silver', img: 'cards/falibor.jpg',
+  renfri:            { id: 'renfri', name: 'Renfri', power: 3, tier: 'silver', faction: 'neutral', img: 'cards/renfri.jpg', abilities: [], playTargetDamage: 3 },
+  falibor:           { id: 'falibor', name: 'Falibor', power: 4, tier: 'silver', faction: 'neutral', img: 'cards/falibor.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 2, effect: (ctx, target) => applyDamage(target, 2) } ] },
 
   /* ---- Northern Realms (faction: 'northern_realms') -- first batch.
@@ -2592,17 +2615,17 @@ const CARD_DB = {
   soldier_token:     { id: 'soldier_token', name: 'Soldier', power: 1, tier: 'token', faction: 'northern_realms', img: 'cards/soldier_token.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
 
-  villentretenmerth: { id: 'villentretenmerth', name: 'Villentretenmerth', power: 3, tier: 'gold', img: 'cards/villentretenmerth.jpg',
+  villentretenmerth: { id: 'villentretenmerth', name: 'Villentretenmerth', power: 3, tier: 'gold', faction: 'neutral', img: 'cards/villentretenmerth.jpg',
                        abilities: [ { trigger: 'onPlay', effect: resolveVillentretenmerth } ] },
 
-  triss_merigold:    { id: 'triss_merigold', name: 'Triss Merigold', power: 3, tier: 'gold', img: 'cards/triss_merigold.jpg', abilities: [], playTargetDamage: 4 },
-  inspiring_troubadour: { id: 'inspiring_troubadour', name: 'Inspiring Troubadour', power: 2, tier: 'bronze', img: 'cards/inspiring_troubadour.jpg', abilities: [],
+  triss_merigold:    { id: 'triss_merigold', name: 'Triss Merigold', power: 3, tier: 'gold', faction: 'neutral', img: 'cards/triss_merigold.jpg', abilities: [], playTargetDamage: 4 },
+  inspiring_troubadour: { id: 'inspiring_troubadour', name: 'Inspiring Troubadour', power: 2, tier: 'bronze', faction: 'neutral', img: 'cards/inspiring_troubadour.jpg', abilities: [],
                        playBuffMulti: 3 },
-  alzurs_thunder:    { id: 'alzurs_thunder', name: "Alzur's Thunder", power: 0, tier: 'bronze', img: 'cards/alzurs_thunder.jpg', special: true,
+  alzurs_thunder:    { id: 'alzurs_thunder', name: "Alzur's Thunder", power: 0, tier: 'bronze', faction: 'neutral', img: 'cards/alzurs_thunder.jpg', special: true,
                        abilities: [ { trigger: 'onPlay', effect: resolveAlzursThunder } ] },
-  ciri:              { id: 'ciri', name: 'Ciri', power: 4, tier: 'gold', img: 'cards/ciri.jpg',
+  ciri:              { id: 'ciri', name: 'Ciri', power: 4, tier: 'gold', faction: 'neutral', img: 'cards/ciri.jpg',
                        abilities: [ { event: 'roundEndFate', effect: (card, info) => info.lost ? 'hand' : 'graveyard' } ] },
-  yennefer:          { id: 'yennefer', name: 'Yennefer of Vengerberg', power: 4, tier: 'gold', img: 'cards/yennefer.jpg', abilities: [],
+  yennefer:          { id: 'yennefer', name: 'Yennefer of Vengerberg', power: 4, tier: 'gold', faction: 'neutral', img: 'cards/yennefer.jpg', abilities: [],
                        discardChoice: 'bronze',
                        // her voice line waits until her revive ability has fully resolved
                        // (see handleDiscardChoiceThenEndTurn) instead of playing on play
@@ -2611,9 +2634,9 @@ const CARD_DB = {
   // Tutorial-only cards: never appear in a normal random deck or the Card
   // Library, only ever dealt directly by the tutorial script (see
   // pickTierIds and ALL_LIBRARY_CARDS below).
-  cutthroat: { id: 'cutthroat', name: 'Cutthroat', power: 3, tier: 'bronze', img: 'cards/cutthroat.jpg', abilities: [], tutorialOnly: true },
-  merchant:  { id: 'merchant',  name: 'Merchant',  power: 2, tier: 'bronze', img: 'cards/merchant.jpg',  abilities: [], tutorialOnly: true },
-  squirrel:  { id: 'squirrel',  name: 'Squirrel',  power: 1, tier: 'bronze', img: 'cards/squirrel.jpg',  abilities: [], tutorialOnly: true },
+  cutthroat: { id: 'cutthroat', name: 'Cutthroat', power: 3, tier: 'bronze', faction: 'neutral', img: 'cards/cutthroat.jpg', abilities: [], tutorialOnly: true },
+  merchant:  { id: 'merchant',  name: 'Merchant',  power: 2, tier: 'bronze', faction: 'neutral', img: 'cards/merchant.jpg',  abilities: [], tutorialOnly: true },
+  squirrel:  { id: 'squirrel',  name: 'Squirrel',  power: 1, tier: 'bronze', faction: 'neutral', img: 'cards/squirrel.jpg',  abilities: [], tutorialOnly: true },
 };
 
 /* Deck composition rules: 8 bronze (max 2 copies of a card), 5 silver
@@ -9130,7 +9153,24 @@ const libraryModal = document.getElementById('libraryModal');
 const libraryGrid = document.getElementById('libraryGrid');
 const libraryFiltersBtn = document.getElementById('libraryFiltersBtn');
 const libraryFiltersMenu = document.getElementById('libraryFiltersMenu');
-const libraryTierFilters = { bronze: true, silver: true, gold: true, token: true };
+const libraryTierFilters = { bronze: true, silver: true, gold: true };
+const libraryFactionFilters = {}; // empty (nothing ticked) = no faction restriction
+let librarySort = null;           // null = default (alphabetical) | 'az' | 'power' | 'color'
+const TIER_ORDER = { gold: 0, silver: 1, bronze: 2, token: 3 };
+function libraryVisibleCards(list) {
+  const tiers = Object.keys(libraryTierFilters).filter(k => libraryTierFilters[k]);
+  const facs = Object.keys(libraryFactionFilters).filter(k => libraryFactionFilters[k]);
+  let out = list.filter(c => {
+    const tierOk = tiers.length === 0 || tiers.includes(c.tier) || (devPickMode && c.tier === 'token'); // dev picker always lists tokens
+    const facOk = facs.length === 0 || facs.includes(c.faction || 'neutral');
+    return tierOk && facOk;
+  });
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  if (librarySort === 'power') out = out.slice().sort((a, b) => (b.power - a.power) || byName(a, b));
+  else if (librarySort === 'color') out = out.slice().sort((a, b) => ((TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9)) || byName(a, b));
+  else out = out.slice().sort(byName); // A-Z / default
+  return out;
+}
 const ALL_LIBRARY_CARDS = Object.values(CARD_DB).filter(c => !c.tutorialOnly && c.tier !== 'token').sort((a, b) => a.name.localeCompare(b.name));
 
 // Developer mode: the same library doubles as a card picker (see openDevPicker)
@@ -9139,7 +9179,7 @@ let devPickSelected = null;  // card id
 const ALL_DEV_CARDS = Object.values(CARD_DB).filter(c => !c.tutorialOnly).sort((a, b) => a.name.localeCompare(b.name));
 function renderLibraryGrid() {
   libraryGrid.innerHTML = '';
-  const cards = (devPickMode ? ALL_DEV_CARDS : ALL_LIBRARY_CARDS).filter(c => libraryTierFilters[c.tier]);
+  const cards = libraryVisibleCards(devPickMode ? ALL_DEV_CARDS : ALL_LIBRARY_CARDS);
   const deckMode = libraryModal.classList.contains('deckBuild');
   if (cards.length === 0) {
     const msg = document.createElement('div');
@@ -9183,6 +9223,7 @@ function closeLibraryModal(force) {
   libraryModal.classList.remove('devPick');
   libraryModal.classList.remove('show');
   libraryFiltersMenu.classList.remove('show');
+  librarySortMenu.classList.remove('show');
   hidePreview();
 }
 
@@ -9752,18 +9793,35 @@ document.getElementById('devPickAddBtn').addEventListener('click', () => {
 
 libraryFiltersBtn.addEventListener('click', (e) => {
   e.stopPropagation();
+  librarySortMenu.classList.remove('show');
   libraryFiltersMenu.classList.toggle('show');
 });
 libraryFiltersMenu.addEventListener('click', (e) => e.stopPropagation());
 libraryFiltersMenu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
   cb.addEventListener('change', () => {
-    libraryTierFilters[cb.dataset.tier] = cb.checked;
+    (cb.dataset.group === 'faction' ? libraryFactionFilters : libraryTierFilters)[cb.dataset.key] = cb.checked;
+    renderLibraryGrid();
+  });
+});
+document.getElementById('libraryClearFilters').addEventListener('click', () => {
+  libraryFiltersMenu.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+  Object.keys(libraryTierFilters).forEach(k => { libraryTierFilters[k] = false; });
+  Object.keys(libraryFactionFilters).forEach(k => { libraryFactionFilters[k] = false; });
+  renderLibraryGrid();
+});
+const librarySortBtn = document.getElementById('librarySortBtn'), librarySortMenu = document.getElementById('librarySortMenu');
+librarySortBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryFiltersMenu.classList.remove('show'); librarySortMenu.classList.toggle('show'); });
+librarySortMenu.addEventListener('click', (e) => e.stopPropagation());
+librarySortMenu.querySelectorAll('input').forEach(cb => {
+  cb.addEventListener('change', () => {
+    librarySort = cb.checked ? cb.dataset.sort : null; // clicking the ticked option again returns to the default
+    librarySortMenu.querySelectorAll('input').forEach(o => { o.checked = o === cb && cb.checked; });
     renderLibraryGrid();
   });
 });
 document.addEventListener('click', (e) => {
-  if (!libraryFiltersMenu.classList.contains('show')) return;
-  if (!libraryFiltersWrap_contains(e.target)) libraryFiltersMenu.classList.remove('show');
+  if (libraryFiltersMenu.classList.contains('show') && !libraryFiltersWrap_contains(e.target)) libraryFiltersMenu.classList.remove('show');
+  if (librarySortMenu.classList.contains('show') && !document.getElementById('librarySortWrap').contains(e.target)) librarySortMenu.classList.remove('show');
 });
 function libraryFiltersWrap_contains(target) {
   return document.getElementById('libraryFiltersWrap').contains(target);

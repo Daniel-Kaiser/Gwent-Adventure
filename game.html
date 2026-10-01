@@ -2220,7 +2220,7 @@ const CARD_DB = {
                        abilities: [
                          { trigger: 'order', needsTarget: true, effect: (ctx, target) => applyPowerDelta(target, 3, ctx) },
                        ] },
-  field_medic:       { id: 'field_medic', name: 'Field Medic', power: 2, tier: 'bronze', faction: 'neutral', img: 'cards/field_medic.jpg',
+  field_medic:       { id: 'field_medic', name: 'Field Medic', power: 1, tier: 'bronze', faction: 'neutral', img: 'cards/field_medic.jpg',
                        abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze',
                                       filter: c => !c.special && c.power >= 1 } ] },
   zoltan_chivay:     { id: 'zoltan_chivay', name: 'Zoltan Chivay', power: 2, tier: 'silver', faction: 'neutral', img: 'cards/zoltan_chivay.jpg', playTargetDamage: 2,

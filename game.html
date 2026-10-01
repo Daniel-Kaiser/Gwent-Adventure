@@ -2318,7 +2318,7 @@ const CARD_DB = {
   // Order: deal 1 damage to up to 3 other cards in play (multi-target session).
   an_craite_greatsword: { id: 'an_craite_greatsword', name: 'An Craite Greatsword', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_greatsword.jpg',
                        abilities: [ { trigger: 'order', needsTarget: true, multiDamage: 3, amount: 1,
-                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial && c.power > 0) } ] },
+                                      validTargets: (side, card) => allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial && c.power > 0) } ] },
   // Bloodthirst 1. Order: deal 1 damage.
   dimun_warship:     { id: 'dimun_warship', name: 'Dimun Warship', power: 2, tier: 'bronze', faction: 'skellige', img: 'cards/dimun_warship.jpg', bloodthirst: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
@@ -2419,7 +2419,7 @@ const CARD_DB = {
   // get +1 each (multi-pick, finish early like Demavend/Troubadour).
   rowdy_dwarf:       { id: 'rowdy_dwarf', name: 'Rowdy Dwarf', power: 2, tier: 'bronze', faction: 'mahakam', img: 'cards/rowdy_dwarf.jpg', playTargetDamage: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, multiBuff: 3,
-                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial),
+                                      validTargets: (side, card) => allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial),
                                       effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
   // Order: deal 1. Its Order refreshes whenever it gets buffed.
   dwarf_berserker:   { id: 'dwarf_berserker', name: 'Dwarf Berserker', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarf_berserker.jpg', refreshOnBuffed: true,
@@ -2471,7 +2471,7 @@ const CARD_DB = {
   // Order: up to two OTHER cards +1 each. Refreshes the first time its owner buffs it each turn.
   xavier_moran:      { id: 'xavier_moran', name: 'Xavier Moran', power: 3, tier: 'silver', faction: 'mahakam', img: 'cards/xavier_moran.jpg', refreshOnBuffed: true,
                        abilities: [ { trigger: 'order', needsTarget: true, multiBuff: 2,
-                                      validTargets: (side, card) => [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial),
+                                      validTargets: (side, card) => allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial),
                                       effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
 
   /* ---- Mahakam golds ---- */
@@ -2797,7 +2797,26 @@ function finalizeDeck(side, cards) {
 function nextCardUid(side) {
   if (!state && !nextCardUid.pending) nextCardUid.pending = { player: 0, ai: 0 };
   const ctr = (state && state.uidCounters) || nextCardUid.pending;
+  // PvP: deck cards get a private, role-based uid ('hd3' / 'gd3'); the
+  // public uid is assigned when the card is drawn (see drawCards)
+  if (nextCardUid.pvpSeats) return nextCardUid.pvpSeats[side] + 'd' + (ctr[side]++);
   return (side === 'player' ? 'p' : 'a') + (ctr[side]++);
+}
+/* ---- Seat helpers shared by single player and PvP ----
+   In PvP each client calls its own seat 'player' and the remote seat 'ai';
+   state.pvpSeats maps them to the canonical roles 'h' (host) / 'g' (guest).
+   Anything whose ORDER can change game state iterates seats host-first
+   (seatOrder / allBoardCards), so both clients process the same cards in the
+   same order. In single player the order is the classic player-first. */
+function seatOrder() {
+  return (state && state.pvpSeats && state.pvpSeats.player === 'g') ? ['ai', 'player'] : ['player', 'ai'];
+}
+function allBoardCards() {
+  const o = seatOrder();
+  return [...state.players[o[0]].board, ...state.players[o[1]].board];
+}
+function seatLetter(side) {
+  return (state && state.pvpSeats) ? state.pvpSeats[side] : (side === 'player' ? 'p' : 'a');
 }
 
 // Fisher-Yates. `rng` is one of the seeded streams below (rngPrivate(side) /
@@ -3288,7 +3307,7 @@ function scheduleTurnStart() {
 }
 // A targeting session described as a serializable request (no closures).
 function describeTargetingRequest(session) {
-  const all = [...state.players.player.board, ...state.players.ai.board];
+  const all = allBoardCards();
   const candidates = all.filter(c => !(session.excludeSelf && c.uid === session.card.uid) && (!session.filter || session.filter(c))).map(c => c.uid);
   return { type: 'target', kind: session.kind, source: session.card.uid, candidates, selected: (session.selected || []).slice(),
            max: session.max || 1, mandatory: !!session.mandatory, amount: session.amount || 0 };
@@ -3327,6 +3346,7 @@ function validateAction(side, a) {
     case 'mulliganDone':
       return state.phase === 'mulligan' && !(state.mulliganReady && state.mulliganReady[side]);
     case 'target':
+      if (pendingBoardPick[side]) return pendingBoardPick[side].uids.includes(a.uid) && !!findCardByUid(a.uid);
       return !!activeTargeting && activeTargeting.side === side && !!targetingCandidate(activeTargeting, a.uid);
     case 'finish':
       return !!activeTargeting && activeTargeting.side === side && activeTargeting.kind === 'pickMulti' &&
@@ -3334,7 +3354,11 @@ function validateAction(side, a) {
     case 'cancel':
       return !!activeTargeting && activeTargeting.side === side;
     case 'pick':
-      return !!pendingPick && pendingPick.side === side && (a.uid === null || pendingPick.uids.includes(a.uid));
+      if (!pendingPick || pendingPick.side !== side) return false;
+      // a pick inside a deck this client can't see (the remote seat's own
+      // deck, e.g. Dandelion) arrives as '?' -- its identity stays private
+      if (a.uid === '?') return pendingPick.zone === 'deck' && state.players[pendingPick.pile].deck.some(c => c.hidden);
+      return a.uid === null || pendingPick.uids.includes(a.uid);
   }
   return false;
 }
@@ -3360,7 +3384,7 @@ function applyAction(side, a) {
     case 'pass': passTurn(side); render(); endTurn(side); break;
     case 'mulligan': applyMulliganSwap(side); break;
     case 'mulliganDone': applyMulliganDone(side); break;
-    case 'target': resolveTargeting(findCardByUid(a.uid)); break;
+    case 'target': if (pendingBoardPick[side]) resolveBoardPick(side, a.uid); else resolveTargeting(findCardByUid(a.uid)); break;
     case 'finish': finishPickMulti(); break;
     case 'cancel': applyTargetingCancel(activeTargeting); break;
     case 'pick': resolvePendingPick(a.uid); break;
@@ -3391,6 +3415,12 @@ function botTick(bot, side) {
   }
   if (state.phase !== 'playing' || botAnimating()) { bot.waited = 0; return; }
   if (++bot.waited < 3) return; // let the engine settle for a few ticks
+  if (pendingBoardPick[side]) {
+    const u = pendingBoardPick[side].uids;
+    submitAction(side, { type: 'target', uid: u[r.int(u.length)] });
+    bot.waited = 0;
+    return;
+  }
   if (pendingPick && pendingPick.side === side) {
     const u = pendingPick.uids;
     submitAction(side, { type: 'pick', uid: r.next() < 0.15 ? null : u[r.int(u.length)] });
@@ -3533,15 +3563,30 @@ function newGameState() {
 }
 
 function logMsg(msg) {
+  if (state && state.pvpSeats && state.oppName) msg = withOpponentName(msg, state.oppName);
   state.log.push(msg);
   renderLog();
 }
+function escapeHtml(t) { return String(t).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+// PvP: "Opponent" in messages becomes the friend's (escaped) name.
+function withOpponentName(msg, name) {
+  const n = escapeHtml(name);
+  return msg.replace(/\bOpponent's\b/g, n + "'s").replace(/\bOpponent\b/g, n);
+}
+function oppLabel() { return (state && state.pvpSeats && state.oppName) ? escapeHtml(state.oppName) : 'Opponent'; }
 
 function drawCards(side, n) {
   const p = state.players[side];
   let drew = 0;
   for (let i = 0; i < n && p.deck.length > 0; i++) {
     const c = p.deck.pop();
+    if (state.pvpSeats) {
+      // PvP: the n-th card a seat draws gets the public uid '<role><n>' on
+      // both clients (the owner's real card and the other client's hidden
+      // placeholder), so draws need no message and reveal nothing
+      state.drawCounters = state.drawCounters || { player: 0, ai: 0 };
+      c.uid = seatLetter(side) + (state.drawCounters[side]++);
+    }
     if (!c.owner) c.owner = side; // original owner -- see sendToGraveyard
     p.hand.push(c);
     drew++;
@@ -3755,7 +3800,7 @@ function dethmoldDiscardActive(side, card) {
 // Every card in play (both boards, Dethmold himself included) tied for the
 // highest current power.
 function highestCardsInPlay() {
-  const all = [...state.players.player.board, ...state.players.ai.board].filter(c => !c.floatingSpecial && c.power > 0);
+  const all = allBoardCards().filter(c => !c.floatingSpecial && c.power > 0);
   if (all.length === 0) return [];
   const max = Math.max(...all.map(c => c.power));
   return all.filter(c => c.power === max);
@@ -3894,8 +3939,14 @@ function flashOrderRefresh(uid) {
    the turn they were created). When they leave the board they simply
    vanish -- see sendToGraveyard / killCardFromBoard. */
 let tokenUidCounter = 0;
-function createToken(id) {
+function createToken(id, side) {
   const base = CARD_DB[id];
+  if (side && state && state.pvpSeats) {
+    // PvP: per-seat counters, so the order in which the two seats' tokens
+    // appear can never make the clients' uids differ
+    state.tokenCounters = state.tokenCounters || { player: 0, ai: 0 };
+    return { ...base, uid: `${seatLetter(side)}t${state.tokenCounters[side]++}`, basePower: base.power };
+  }
   return { ...base, uid: `tok${tokenUidCounter++}`, basePower: base.power };
 }
 /* Play-effect token spawners (Poor Fucking Infantry, Kaedweni Sergeant)
@@ -3937,7 +3988,7 @@ function createTokensRightOf(side, sourceCard, tokenId, count) {
   if (idx === -1) idx = board.length - 1;
   const created = [];
   for (let i = 0; i < count; i++) {
-    const t = createToken(tokenId);
+    const t = createToken(tokenId, side);
     t.playedTurn = state.turnCounter;
     t.orderUsed = false;
     t.owner = side;
@@ -4271,7 +4322,7 @@ function runBuffReaction(r) {
       return;
     }
     if (r.type === 'chariot') {
-      const others = [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial);
+      const others = allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial);
       if (others.length === 0) { resolve(); return; }
       if (isInteractive(side)) {
         logMsg(`${side === 'player' ? `Your ${card.name} lets you` : `Opponent's ${card.name} lets them`} give another card +${card.chariotOnOwnerBuff}.`);
@@ -4361,7 +4412,7 @@ function startSequentialBuffPicks(side, card, n, notifyInfo, onDone, opts) {
     let left = n;
     const next = () => {
       if (left <= 0 || !state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
-      const others = [...state.players.player.board, ...state.players.ai.board].filter(c => (includeSelf || c.uid !== liveCard.uid) && !c.floatingSpecial);
+      const others = allBoardCards().filter(c => (includeSelf || c.uid !== liveCard.uid) && !c.floatingSpecial);
       if (others.length === 0) { finish(); return; }
       left--;
       if (isInteractive(side)) {
@@ -4416,7 +4467,7 @@ function runSeqBuffOrder(side, card, ability) {
    side's discard pile (sendToGraveyard). While moved, it counts for the
    side it's on, and that side controls its Order. ---- */
 function mercenaryMoveTargets(card) {
-  return [...state.players.player.board, ...state.players.ai.board]
+  return allBoardCards()
     .filter(c => c.uid !== card.uid && !c.floatingSpecial && c.power === 1);
 }
 function moveCardToOtherSide(target, onDone) {
@@ -4743,7 +4794,7 @@ function killCardFromBoard(card, opts, onDone) {
 // the end of a turn heals back up to base -- damage that doesn't kill a
 // card only lasts for the turn it was dealt on.
 function healTemporaryDamage() {
-  ['player', 'ai'].forEach(side => {
+  seatOrder().forEach(side => {
     state.players[side].board.forEach(card => {
       if (card.basePower !== undefined && card.power > 0 && card.power < card.basePower) {
         card.power = card.basePower;
@@ -4828,7 +4879,7 @@ function onDamageDealt(card, amount, sourceSide, sourceCard) {
   }
 }
 function cardsInPlayExcept(card) {
-  return [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial);
+  return allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial);
 }
 // An Craite Longship: its buffs = power above its base (net of damage), max +3.
 function longshipBuffs(card) {
@@ -5001,7 +5052,7 @@ function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone, opts
     };
     const next = () => {
       if (left <= 0 || !state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
-      const all = [...state.players.player.board, ...state.players.ai.board].filter(c => c.power > 0 && !c.floatingSpecial);
+      const all = allBoardCards().filter(c => c.power > 0 && !c.floatingSpecial);
       if (all.length === 0) { finish(); return; }
       if (isInteractive(side)) {
         const startPick = () => {
@@ -5049,7 +5100,7 @@ function buffTridamInfantry(card, info) {
    owner's discard pile instead of staying on the board. */
 function resolveScorch(ctx) {
   const inPlay = [];
-  ['player', 'ai'].forEach(side => {
+  seatOrder().forEach(side => {
     state.players[side].board.forEach(card => {
       if (card.uid !== ctx.card.uid) inPlay.push({ side, card });
     });
@@ -5094,7 +5145,7 @@ function resolveAlzursThunder(ctx) {
     if (ctx.onResolved) ctx.onResolved();
   };
   if (isInteractive(side)) {
-    const validTargets = [...state.players.player.board, ...state.players.ai.board]
+    const validTargets = allBoardCards()
       .filter(c => c.uid !== card.uid && c.tier === 'bronze');
     if (validTargets.length === 0) {
       logMsg(`${possessive(side)} Alzur's Thunder finds no Bronze card to strike.`);
@@ -5131,7 +5182,7 @@ function resolveAlzursThunder(ctx) {
    are discarded. */
 function saesenthessisPool(side) {
   const pool = [];
-  ['player', 'ai'].forEach(s => state.players[s].board.forEach(c => {
+  seatOrder().forEach(s => state.players[s].board.forEach(c => {
     if (c.floatingSpecial) return;
     if (s === side && c.basePower !== undefined && c.power > c.basePower) return;
     pool.push({ side: s, card: c });
@@ -5151,7 +5202,7 @@ function resolveSaesenthessis(ctx) {
 // Destroyed, not damaged: no damage-dealt event.
 function resolveCoral(ctx) {
   const inPlay = [];
-  ['player', 'ai'].forEach(side => {
+  seatOrder().forEach(side => {
     state.players[side].board.forEach(card => {
       if (card.uid !== ctx.card.uid && !card.floatingSpecial && card.power > 0) inPlay.push({ side, card });
     });
@@ -5164,7 +5215,7 @@ function resolveCoral(ctx) {
 }
 function resolveVillentretenmerth(ctx) {
   const inPlay = [];
-  ['player', 'ai'].forEach(side => {
+  seatOrder().forEach(side => {
     state.players[side].board.forEach(card => {
       inPlay.push({ side, card });
     });
@@ -5208,7 +5259,7 @@ async function handleDeckTopChoiceThenEndTurn(side, notifyInfo) {
   // deck cards are drawn from the end of the array (drawCards uses .pop()),
   // so "on top" means the last element, not the first
   state.players[side].deck = [...shuffle(rest, rngPrivate(side)), chosen];
-  logMsg(`${side === 'player' ? 'You put' : 'Opponent puts'} ${chosen.name} on top of ${side === 'player' ? 'your' : 'their'} deck and shuffles the rest.`);
+  logMsg(`${side === 'player' ? 'You put' : 'Opponent puts'} ${chosen.hidden ? 'a card' : chosen.name} on top of ${side === 'player' ? 'your' : 'their'} deck and shuffles the rest.`);
   finish();
 }
 
@@ -5716,6 +5767,39 @@ function pickOwnCardInPlay(side, source, opts) {
     go();
   });
 }
+/* "Each player chooses one of their cards" (Rotfiend, Archgriffin). Single
+   player: one after the other, active side first (unchanged). PvP: both
+   players choose at the same time -- the local seat through the normal pick
+   UI, the remote seat as a parallel board-pick request answered by its
+   'target' action -- and the effect resolves once both have chosen. */
+const pendingBoardPick = { player: null, ai: null }; // side -> { uids, resolve }
+async function pickOwnBoth(card, sides, opts) {
+  const picks = {};
+  if (!(state && state.pvpSeats)) {
+    for (const s of sides) {
+      picks[s] = await pickOwnCardInPlay(s, card, opts);
+      if (s === 'ai') await delay(400);
+    }
+    return picks;
+  }
+  await Promise.all(sides.map(async s => {
+    if (isLocalSide(s)) { picks[s] = await pickOwnCardInPlay(s, card, opts); return; }
+    const cands = state.players[s].board.filter(c => !c.floatingSpecial);
+    if (cands.length === 0) { picks[s] = null; return; }
+    picks[s] = await new Promise(resolve => {
+      pendingBoardPick[s] = { uids: cands.map(c => c.uid), source: card.uid, resolve };
+      notifyRequest(s, { type: 'target', kind: 'pickOwn', source: card.uid, candidates: cands.map(c => c.uid), selected: [], max: 1, mandatory: true, amount: 0 });
+    });
+  }));
+  return picks;
+}
+function resolveBoardPick(side, uid) {
+  const bp = pendingBoardPick[side];
+  if (!bp) return;
+  pendingBoardPick[side] = null;
+  bp.resolve(findCardByUid(uid));
+}
+
 // One damage hit of `amt` (player: targeting with cancel confirm; AI: kills first, nothing if wasted).
 function scriptDamageHit(side, card, amt) {
   return startSequentialDamagePicks(side, card, 1, amt, null, null);
@@ -5854,11 +5938,7 @@ function aiWantsForktail(card) {
 // as discarded by the ACTIVE player. A player with nothing in play is skipped.
 async function rotfiendOrder(side, card, markUsed) {
   const opp = otherSide(side);
-  const picks = {};
-  for (const s of [side, opp]) {
-    picks[s] = await pickOwnCardInPlay(s, card, { mandatory: true, banner: 'Pick a card to be discarded' });
-    if (s === 'ai') await delay(400);
-  }
+  const picks = await pickOwnBoth(card, [side, opp], { mandatory: true, banner: 'Pick a card to be discarded' });
   markUsed();
   const chosen = [picks[side], picks[opp]].filter(Boolean);
   if (chosen.length === 0) { logMsg(`${card.name}'s Order finds nothing to discard.`); return; }
@@ -5902,7 +5982,7 @@ async function eatOwnChoice(side, card, o) {
 // Give `amt` power to another card in play (either side; mandatory once the discard happened).
 async function giveBuffChoice(side, source, amt) {
   const live = state.players[side].board.find(c => c.uid === source.uid) || source;
-  const all = [...state.players.player.board, ...state.players.ai.board].filter(c => !c.floatingSpecial && c.uid !== source.uid);
+  const all = allBoardCards().filter(c => !c.floatingSpecial && c.uid !== source.uid);
   if (all.length === 0 || !state || state.phase !== 'playing') return null;
   let t;
   if (!isInteractive(side)) {
@@ -5940,12 +6020,8 @@ function graveHagPlay(side, card) { return fiendPlay(side, card); }
 // Archgriffin: like Rotfiend's Order, but as a Play (she is already in play and may be chosen by her owner).
 async function archgriffinPlay(side, card) {
   const opp = otherSide(side);
-  const picks = {};
-  for (const s of [side, opp]) {
-    picks[s] = await pickOwnCardInPlay(s, card, { mandatory: true, banner: 'Pick a card to be discarded',
+  const picks = await pickOwnBoth(card, [side, opp], { mandatory: true, banner: 'Pick a card to be discarded',
       aiPick: cands => cands.slice().sort((a, b) => (aiKeepValue(a) + (a.uid === card.uid ? 100 : 0)) - (aiKeepValue(b) + (b.uid === card.uid ? 100 : 0)))[0] });
-    if (s === 'ai') await delay(400);
-  }
   const chosen = [picks[side], picks[opp]].filter(Boolean);
   if (chosen.length === 0) return;
   logMsg(`${card.name}: ${chosen.map(c => c.name).join(' and ')} ${chosen.length > 1 ? 'are' : 'is'} discarded.`);
@@ -6026,7 +6102,7 @@ function aiWantsNest(card) { return aiBuffEatWanted(card, 4); }
 
 // Whispess: may discard one of your other cards; if you do, move a card with 2 or less power to the other side.
 function whispessTargets(card) {
-  return [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial && c.power <= 2);
+  return allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial && c.power <= 2);
 }
 function aiWhispessTarget(card) {
   const t = whispessTargets(card).filter(c => findCardOwnerSide(c.uid) === 'player' && c.power >= 1);
@@ -6470,7 +6546,7 @@ function endRound() {
   // power before we move anything, so we can fly a clone of it to wherever
   // it's headed (graveyard or hand) once the "real" layout has updated
   const flights = [];
-  ['player', 'ai'].forEach(side => {
+  seatOrder().forEach(side => {
     state.players[side].board.forEach(card => {
       const el = document.querySelector(`.card[data-uid="${card.uid}"]`);
       if (el) flights.push({ side, snapshot: { ...card }, fromRect: el.getBoundingClientRect() });
@@ -6481,7 +6557,7 @@ function endRound() {
   state.players.ai.holgerPending = [];
   // move board cards to graveyard (or back to hand, for cards like Ciri
   // that return to hand when their side lost the round)
-  ['player', 'ai'].forEach(side => {
+  seatOrder().forEach(side => {
     const p = state.players[side];
     const lost = winner !== side;
     p.board.forEach(card => {
@@ -7664,7 +7740,13 @@ function startDeckTopDamage(side, card, notifyInfo, onDone) {
     };
     const who = side === 'player' ? 'Your' : "Opponent's";
     const deck = state.players[side].deck;
-    const top = deck[deck.length - 1];
+    // PvP: the owner's client publishes the top card's identity; the other
+    // client waits for it (pvpDeckTopReveal) before resolving
+    const topNow = deck[deck.length - 1];
+    if (state.pvpSeats && topNow && typeof pvpDeckTopReveal === 'function') pvpDeckTopReveal(side).then(t => go(t));
+    else go(topNow);
+    function go(top) {
+    if (!state || state.phase !== 'playing') { resolve(); return; }
     if (!top) {
       logMsg(`${who} deck is empty -- ${card.name} has no effect.`);
       finish();
@@ -7674,7 +7756,7 @@ function startDeckTopDamage(side, card, notifyInfo, onDone) {
     logMsg(`${who} ${card.name} reveals ${top.name} (${amount}) from the top of the deck.`);
     const hide = showDeckTopReveal(side, top);
     const liveCard = state.players[side].board.find(c => c.uid === card.uid) || card;
-    const allTargets = [...state.players.player.board, ...state.players.ai.board];
+    const allTargets = allBoardCards();
     if (amount <= 0 || allTargets.length === 0) {
       setTimeout(() => { hide(); finish(); }, 1100);
       return;
@@ -7695,6 +7777,7 @@ function startDeckTopDamage(side, card, notifyInfo, onDone) {
         applyPlayDamage('ai', liveCard, amount, target, () => { hide(); finish(); });
       }, 900);
     }
+    }
   });
 }
 
@@ -7713,7 +7796,7 @@ function startPlayDamageMulti(side, card, notifyInfo, onDone) {
       afterInteractiveStep(side);
       resolve();
     };
-    const others = [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== liveCard.uid && c.power > 0 && !c.floatingSpecial);
+    const others = allBoardCards().filter(c => c.uid !== liveCard.uid && c.power > 0 && !c.floatingSpecial);
     if (others.length === 0) { finish(); return; }
     if (isInteractive(side)) {
       startTargeting({ side, card: liveCard, kind: 'playBuffMulti', max: card.playDamageMulti, selected: [], excludeSelf: true,
@@ -7775,7 +7858,7 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
     startSequentialDamagePicks(side, card, card.playDamageSeq, card.playDamageSeqAmount || 1, notifyInfo, onDone);
   } else if (card.playBuffMulti) {
     if (isInteractive(side)) {
-      const validCount = [...state.players.player.board, ...state.players.ai.board]
+      const validCount = allBoardCards()
         .filter(c => c.uid !== card.uid).length;
       if (validCount === 0) { finish(); return; }
       startTargeting({ side, card, kind: 'playBuffMulti', max: card.playBuffMulti,
@@ -8290,7 +8373,7 @@ function resolvePendingPick(uid) {
   if (!pp) return;
   pendingPick = null;
   const zoneCards = pp.zone === 'deck' ? state.players[pp.pile].deck : state.players[pp.pile].graveyard;
-  const card = uid ? zoneCards.find(c => c.uid === uid) || null : null;
+  const card = uid === '?' ? zoneCards[zoneCards.length - 1] || null : uid ? zoneCards.find(c => c.uid === uid) || null : null;
   pp.resolve(card);
 }
 
@@ -8948,7 +9031,7 @@ function resolveTargeting(targetCard) {
 // active multi-target session (everything, minus the source card itself
 // when the ability excludes self-targeting).
 function countValidMultiTargets(session) {
-  const all = [...state.players.player.board, ...state.players.ai.board];
+  const all = allBoardCards();
   return all.filter(c => !(session.excludeSelf && c.uid === session.card.uid) && (!session.filter || session.filter(c))).length;
 }
 
@@ -9472,7 +9555,7 @@ function continueAfterPlay(side, playedCard, played) {
     } else if (playedCard && playedCard.playDamageSeq) {
       startSequentialDamagePicks(side, playedCard, playedCard.playDamageSeq, playedCard.playDamageSeqAmount || 1, notifyInfo);
     } else if (playedCard && playedCard.playBuffMulti) {
-      const validCount = [...state.players.player.board, ...state.players.ai.board]
+      const validCount = allBoardCards()
         .filter(c => c.uid !== playedCard.uid).length;
       if (validCount === 0) {
         if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
@@ -9648,6 +9731,8 @@ function maybeAutoPass() {
     !state.players.player.orderUsedThisTurn && state.players.player.hand.length === 0 &&
     !hasAnyUsableOrder('player');
   if (!canAutoPass) return;
+  if (!isLocalSide('player')) return; // a bot / remote driver decides for itself
+  const armedTurn = state.turnCounter, armedRound = state.round;
 
   autoPassing = true;
   // a beat before committing to the pass, so it doesn't feel instantaneous
@@ -9662,7 +9747,9 @@ function maybeAutoPass() {
         coinBtn.classList.remove('holding');
         setProgress(0);
         autoPassing = false;
-        submitAction('player', { type: 'pass' });
+        // only if it's still that same turn (the player may have passed by
+        // hand meanwhile and a new round may already be under way)
+        if (state && state.turnCounter === armedTurn && state.round === armedRound) submitAction('player', { type: 'pass' });
       } else {
         raf = requestAnimationFrame(step);
       }

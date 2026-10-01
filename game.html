@@ -1698,6 +1698,46 @@
   #deckNameLine { color: var(--text); font-size: 13px; font-weight: 700; margin-left: 12px; }
   #deckNameLine .dirty { color: var(--accent); }
 
+  /* ---- Big hovering prompt while picking a card (Rotfiend etc.) ---- */
+  #pickBanner { position: fixed; left: 50%; top: 31%; transform: translateX(-50%); z-index: 1250; pointer-events: none; display: none;
+    font-family: 'GwentFont', serif; font-size: 38px; letter-spacing: 2px; color: var(--accent); text-align: center; white-space: nowrap;
+    text-shadow: 0 2px 6px #000, 0 0 22px #000c; animation: pickBannerPulse 1.6s ease-in-out infinite; }
+  #pickBanner.show { display: block; }
+  @keyframes pickBannerPulse { 0%,100% { opacity: .95; transform: translateX(-50%) scale(1); } 50% { opacity: .7; transform: translateX(-50%) scale(1.03); } }
+
+  /* ---- "Eaten" discard effect: a jagged mouth sweeps down the card in four bites ---- */
+  .eatenCard { animation: eatClip .95s linear forwards, eatShake .95s linear forwards; }
+  @keyframes eatClip {
+    0% { clip-path: polygon(0% -14%,10% -2%,20% -14%,30% -2%,40% -14%,50% -2%,60% -14%,70% -2%,80% -14%,90% -2%,100% -14%,100% 100%,0% 100%); }
+    8% { clip-path: polygon(0% -14%,10% -2%,20% -14%,30% -2%,40% -14%,50% -2%,60% -14%,70% -2%,80% -14%,90% -2%,100% -14%,100% 100%,0% 100%); }
+    18% { clip-path: polygon(0% 22%,10% 34%,20% 22%,30% 34%,40% 22%,50% 34%,60% 22%,70% 34%,80% 22%,90% 34%,100% 22%,100% 100%,0% 100%); }
+    30% { clip-path: polygon(0% 22%,10% 34%,20% 22%,30% 34%,40% 22%,50% 34%,60% 22%,70% 34%,80% 22%,90% 34%,100% 22%,100% 100%,0% 100%); }
+    40% { clip-path: polygon(0% 48%,10% 60%,20% 48%,30% 60%,40% 48%,50% 60%,60% 48%,70% 60%,80% 48%,90% 60%,100% 48%,100% 100%,0% 100%); }
+    52% { clip-path: polygon(0% 48%,10% 60%,20% 48%,30% 60%,40% 48%,50% 60%,60% 48%,70% 60%,80% 48%,90% 60%,100% 48%,100% 100%,0% 100%); }
+    62% { clip-path: polygon(0% 74%,10% 86%,20% 74%,30% 86%,40% 74%,50% 86%,60% 74%,70% 86%,80% 74%,90% 86%,100% 74%,100% 100%,0% 100%); }
+    74% { clip-path: polygon(0% 74%,10% 86%,20% 74%,30% 86%,40% 74%,50% 86%,60% 74%,70% 86%,80% 74%,90% 86%,100% 74%,100% 100%,0% 100%); }
+    86% { clip-path: polygon(0% 112%,10% 124%,20% 112%,30% 124%,40% 112%,50% 124%,60% 112%,70% 124%,80% 112%,90% 124%,100% 112%,100% 100%,0% 100%); }
+    100% { clip-path: polygon(0% 112%,10% 124%,20% 112%,30% 124%,40% 112%,50% 124%,60% 112%,70% 124%,80% 112%,90% 124%,100% 112%,100% 100%,0% 100%); }
+  }
+  @keyframes eatShake { 0%,100% { transform: translate(0,0) rotate(0); } 12% { transform: translate(-3px,2px) rotate(-2deg); } 25% { transform: translate(3px,-2px) rotate(2deg); }
+    37% { transform: translate(-3px,1px) rotate(-1.5deg); } 50% { transform: translate(3px,2px) rotate(2deg); } 62% { transform: translate(-2px,-2px) rotate(-1deg); } 75% { transform: translate(2px,1px) rotate(1deg); } 87% { transform: translate(-1px,0) rotate(0); } }
+  .eatTeeth { position: fixed; z-index: 655; pointer-events: none; height: 18px; overflow: hidden;
+    background: linear-gradient(135deg, #f4ecd2 25%, transparent 25%) -9px 0, linear-gradient(225deg, #f4ecd2 25%, transparent 25%) -9px 0;
+    background-size: 18px 18px; filter: drop-shadow(0 2px 2px #000a); animation: eatTeeth .95s linear forwards; }
+  @keyframes eatTeeth {
+    0% { transform: translateY(calc(var(--eatH, 130px) * 0.000)); }
+    8% { transform: translateY(calc(var(--eatH, 130px) * 0.000)); }
+    18% { transform: translateY(calc(var(--eatH, 130px) * 0.360)); }
+    30% { transform: translateY(calc(var(--eatH, 130px) * 0.360)); }
+    40% { transform: translateY(calc(var(--eatH, 130px) * 0.620)); }
+    52% { transform: translateY(calc(var(--eatH, 130px) * 0.620)); }
+    62% { transform: translateY(calc(var(--eatH, 130px) * 0.880)); }
+    74% { transform: translateY(calc(var(--eatH, 130px) * 0.880)); }
+    86% { transform: translateY(calc(var(--eatH, 130px) * 1.260)); }
+    100% { transform: translateY(calc(var(--eatH, 130px) * 1.260)); }
+  }
+  .eatCrumb { position: fixed; z-index: 656; pointer-events: none; border-radius: 2px; background: #6a2a22; box-shadow: 0 0 3px #000a; }
+
   /* ---- Click-to-start gate (guarantees a user gesture before any audio
      is attempted, so the browser never blocks the main-menu music) ---- */
   #clickToStartOverlay {
@@ -1945,6 +1985,8 @@
   </div>
   <div id="deckBody"></div>
 </div>
+
+<div id="pickBanner"></div>
 
 <div id="clickToStartOverlay">
   <div id="clickToStartText">Click anywhere to start</div>
@@ -2509,6 +2551,42 @@ const CARD_DB = {
                                       filter: c => isReviveEligibleBronze(c), reviveOrderUsableNow: true,
                                       validTargets: (side) => state.players[side].graveyard.filter(c => c.tier === 'bronze' && isReviveEligibleBronze(c)) } ] },
 
+  /* ---- Monsters of Velen (faction: 'monsters_of_velen') -- bronzes built around
+     "discard from play" events (see onCardDiscardedFromPlay). A card is
+     "discarded by you" when YOUR effect removed it from play (damage kill,
+     Scorch-like burn, or a discard effect); passives only react to their own
+     side's discards of that side's own cards. ---- */
+  // Order: each player picks one of their cards in play; both are discarded (eaten).
+  rotfiend:          { id: 'rotfiend', name: 'Rotfiend', power: 4, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/rotfiend.jpg',
+                       abilities: [ { trigger: 'order', needsTarget: false, orderScript: rotfiendOrder, aiWants: aiWantsRotfiend } ] },
+  // Play: create a Larva token. Passive: +1 power whenever you discard one of your other cards in play.
+  arachas_drone:     { id: 'arachas_drone', name: 'Arachas Drone', power: 2, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/arachas_drone.jpg', discardBuffSelf: true,
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'larva_token', 1) } ] },
+  // Play: create 2 Larva tokens. Passive: when YOU discard this card from play, create 2 Larva tokens.
+  archespore:        { id: 'archespore', name: 'Archespore', power: 2, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/archespore.jpg', discardSelfTokens: 2,
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'larva_token', 2) } ] },
+  // Play (may): discard one of your other cards in play; if you do, deal 3 damage.
+  cyclops:           { id: 'cyclops', name: 'Cyclops', power: 3, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/cyclops.jpg', playScript: cyclopsPlay, abilities: [] },
+  // Order: deal 1 damage. Refreshes whenever you discard one of your other cards in play.
+  endrega_warrior:   { id: 'endrega_warrior', name: 'Endrega Warrior', power: 3, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/endrega_warrior.jpg', refreshOnOwnDiscard: true,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Play (may): deal 2 damage. Order (may): discard one of your other cards in play; if you do, deal 2 damage.
+  forktail:          { id: 'forktail', name: 'Forktail', power: 2, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/forktail.jpg', playDamageSeq: 1, playDamageSeqAmount: 2,
+                       abilities: [ { trigger: 'order', needsTarget: false, orderScript: forktailOrder, aiWants: aiWantsForktail, validTargets: ownOtherCardsInPlay } ] },
+  // Play & Order (may): discard one of your other cards in play; if you do, this card gets +2.
+  ghoul:             { id: 'ghoul', name: 'Ghoul', power: 4, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/ghoul.jpg', playScript: ghoulPlay,
+                       abilities: [ { trigger: 'order', needsTarget: false, orderScript: ghoulOrder, aiWants: aiWantsGhoul, validTargets: ownOtherCardsInPlay } ] },
+  // Play (may): deal 1 damage, then create a Larva token. Order: deal 1 damage.
+  harpy:             { id: 'harpy', name: 'Harpy', power: 1, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/harpy.jpg', playScript: harpyPlay, playScriptDamage: 1,
+                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Play: create a Larva token. Passive: when YOU discard this card from play, play another Bronze card from your discard pile.
+  monster_egg:       { id: 'monster_egg', name: 'Monster Egg', power: 2, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/monster_egg.jpg', discardSelfPlayBronze: true,
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'larva_token', 1) } ] },
+  // Passive: whenever you discard one of your other cards from play, this card is played from your discard pile.
+  nekker:            { id: 'nekker', name: 'Nekker', power: 2, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/nekker.jpg', nekkerReturn: true, abilities: [] },
+  // Token (never in decks): 1 power, no abilities.
+  larva_token:       { id: 'larva_token', name: 'Larva', power: 1, tier: 'token', faction: 'monsters_of_velen', img: 'cards/larva_token.jpg', abilities: [] },
+
   // Token: never in random decks or the Card Library, and it vanishes when
   // it leaves the board (never reaches a discard pile) -- see sendToGraveyard.
   soldier_token:     { id: 'soldier_token', name: 'Soldier', power: 1, tier: 'token', faction: 'northern_realms', img: 'cards/soldier_token.jpg',
@@ -2688,7 +2766,11 @@ const SFX = (() => {
   function buttonHover() {
     playClip('sfx/button_hover.mp3', 0.5);
   }
-  return { pickup, place, coinToss, impact, cardDraw, buff, gameOver, roundEnd, burn, orderRefresh, buttonHover };
+  // The eating effect (Rotfiend / Cyclops / Forktail / Ghoul discards).
+  function consume() {
+    playClip('sfx/consume.mp3', 0.8);
+  }
+  return { pickup, place, coinToss, impact, cardDraw, buff, gameOver, roundEnd, burn, orderRefresh, buttonHover, consume };
 })();
 
 /* Certain cards have played-card voice lines -- one random line (per card
@@ -3273,11 +3355,11 @@ function aiDethmoldDiscardFavorable(hypothetical) {
 // Shared Scorch-style resolution: scorch sfx + flame kill animation on every
 // target; onDone fires once all of them have finished. Used by Scorch,
 // Villentretenmerth, King Henselt, Pyrotechnician and Dethmold's discard.
-function burnCardsInPlay(cards, onDone) {
+function burnCardsInPlay(cards, onDone, discarderSide) {
   if (!cards.length) { if (onDone) onDone(); return; }
   SFX.burn();
   let remaining = cards.length;
-  cards.forEach(c => killCardFromBoard(c, { flame: true }, () => {
+  cards.forEach(c => killCardFromBoard(c, { flame: true, discarderSide }, () => {
     remaining--;
     if (remaining === 0 && onDone) onDone();
   }));
@@ -3288,7 +3370,7 @@ function resolveHighestDiscardOrder(side, card) {
   const targets = highestCardsInPlay();
   if (targets.length === 0) { logMsg(`${card.name}'s Order finds nothing to discard.`); return; }
   logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} discards ${targets.map(t => t.name).join(', ')} (${targets[0].power} power).`);
-  burnCardsInPlay(targets, () => render());
+  burnCardsInPlay(targets, () => render(), side);
 }
 function resolveDethmoldDiscard(side, card, onDone) {
   pendingPlayTokenSpawns++; // hold the turn open until the discards finish
@@ -3297,7 +3379,7 @@ function resolveDethmoldDiscard(side, card, onDone) {
     const targets = highestCardsInPlay();
     if (targets.length === 0) { done(); return; }
     logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} discards ${targets.map(t => t.name).join(', ')} (${targets[0].power} power).`);
-    burnCardsInPlay(targets, () => { render(); done(); });
+    burnCardsInPlay(targets, () => { render(); done(); }, side);
     render();
   }, 400);
 }
@@ -3621,7 +3703,7 @@ let buffReactionTally = { turn: -1, n: 0 };
 // projectile is in flight), so this keeps other Orders/actions from
 // starting a second, overlapping session.
 let seqBuffActive = 0;
-function buffReactionsBusy() { return buffReactionProcessing || buffReactionQueue.length > 0 || seqBuffActive > 0 || paulieReturnPending > 0 || afterPlayPending > 0 || followupRunning || followupQueue.length > 0; }
+function buffReactionsBusy() { return buffReactionProcessing || buffReactionQueue.length > 0 || seqBuffActive > 0 || paulieReturnPending > 0 || afterPlayPending > 0 || followupRunning || followupQueue.length > 0 || scriptBusy > 0; }
 function beginBuffBatch() { buffBatchDepth++; }
 function endBuffBatch() { buffBatchDepth = Math.max(0, buffBatchDepth - 1); scheduleBuffReactions(); }
 function buffReactionsIdle() {
@@ -4157,7 +4239,7 @@ function applyDamage(card, amount, source) {
       tutorialPendingKill = card;
       return;
     }
-    killCardFromBoard(card);
+    killCardFromBoard(card, { discarderSide: src ? src.side : null });
   }
 }
 
@@ -4177,7 +4259,9 @@ function killCardFromBoard(card, opts, onDone) {
     const displaySnapshot = { ...card }; // keep its last on-field power for the flight
     p.board.splice(idx, 1);
     sendToGraveyard(side, card);
-    logMsg(`${card.name} is destroyed!`);
+    logMsg(opts.eat ? `${card.name} is eaten and discarded!` : `${card.name} is destroyed!`);
+    // "discarded from play" event -- reported with the side whose effect caused it
+    try { onCardDiscardedFromPlay(card, side, opts.discarderSide || null); } catch (e) { console.error(e); }
     if (card.tier === 'token') { if (liveEl) liveEl.style.visibility = 'hidden'; if (onDone) onDone(); return; } // vanishes, no flight to the discard pile
     if (liveEl) {
       const pileEl = document.getElementById(cardOwner(card, side) === 'player' ? 'discardPileMe' : 'discardPileOpp');
@@ -4213,12 +4297,14 @@ function killCardFromBoard(card, opts, onDone) {
     clone.style.margin = '0';
     clone.style.zIndex = '650';
     clone.style.pointerEvents = 'none';
-    clone.classList.add(opts.flame ? 'burnFlash' : 'deathFlash');
+    clone.classList.add(opts.eat ? 'eatenCard' : opts.flame ? 'burnFlash' : 'deathFlash');
     document.body.appendChild(clone);
     el.style.visibility = 'hidden'; // the clone fully covers it, but belt-and-suspenders
-    const duration = opts.flame ? 900 : 700;
+    const extras = opts.eat ? spawnEatExtras(rect) : [];
+    const duration = opts.eat ? 980 : opts.flame ? 900 : 700;
     setTimeout(() => {
       clone.remove();
+      extras.forEach(x => x.remove());
       finishKill();
     }, duration);
   });
@@ -4474,11 +4560,11 @@ function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone, opts
       const enemy = state.players.player.board.filter(c => c.power > 0 && !c.floatingSpecial);
       if (enemy.length === 0) return null;
       const plan = state.aiComboPlan;
-      let t = last && enemy.find(c => c.uid === last && c.power <= left);
+      let t = last && enemy.find(c => c.uid === last && c.power <= left * amt);
       if (!t && state.aiFocusUid) t = enemy.find(c => c.uid === state.aiFocusUid);
-      if (!t && plan) t = enemy.find(c => c.uid === plan.targetUid && c.power <= left);
+      if (!t && plan) t = enemy.find(c => c.uid === plan.targetUid && c.power <= left * amt);
       if (!t) {
-        const killable = enemy.filter(c => c.power <= left);
+        const killable = enemy.filter(c => c.power <= left * amt);
         if (killable.length) t = pickDamageTarget(killable, (a, b) => a.power > b.power);
         else if (aiDamageSideValue() > 0) t = pickDamageTarget(enemy, (a, b) => a.power > b.power);
       }
@@ -4553,7 +4639,7 @@ function resolveScorch(ctx) {
     const maxPower = Math.max(...inPlay.map(x => x.card.power));
     const targets = inPlay.filter(x => x.card.power === maxPower);
     logMsg(`Scorch incinerates ${targets.map(t => t.card.name).join(', ')} (${maxPower} power).`);
-    burnCardsInPlay(targets.map(t => t.card), finishResolve);
+    burnCardsInPlay(targets.map(t => t.card), finishResolve, ctx.side);
   } else {
     finishResolve();
   }
@@ -4626,7 +4712,7 @@ function resolveSaesenthessis(ctx) {
   const maxPower = Math.max(...pool.map(x => x.card.power));
   const targets = pool.filter(x => x.card.power === maxPower);
   logMsg(`Saesenthessis discards ${targets.map(t => t.card.name).join(', ')} (${maxPower} power).`);
-  burnCardsInPlay(targets.map(t => t.card));
+  burnCardsInPlay(targets.map(t => t.card), null, ctx.side);
 }
 // Coral: like Scorch -- every card in play with the highest power (both sides, ties
 // all go; not Coral herself, no card is immune) is destroyed with the burn fx.
@@ -4642,7 +4728,7 @@ function resolveCoral(ctx) {
   const maxPower = Math.max(...inPlay.map(x => x.card.power));
   const targets = inPlay.filter(x => x.card.power === maxPower);
   logMsg(`Coral discards ${targets.map(t => t.card.name).join(', ')} (${maxPower} power).`);
-  burnCardsInPlay(targets.map(t => t.card));
+  burnCardsInPlay(targets.map(t => t.card), null, ctx.side);
 }
 function resolveVillentretenmerth(ctx) {
   const inPlay = [];
@@ -4655,7 +4741,7 @@ function resolveVillentretenmerth(ctx) {
     const maxPower = Math.max(...inPlay.map(x => x.card.power));
     const targets = inPlay.filter(x => x.card.power === maxPower);
     logMsg(`Villentretenmerth discards ${targets.map(t => t.card.name).join(', ')} (${maxPower} power).`);
-    burnCardsInPlay(targets.map(t => t.card));
+    burnCardsInPlay(targets.map(t => t.card), null, ctx.side);
   }
 }
 
@@ -4969,6 +5055,7 @@ function queueFollowup(f) {
   if (followupTally.turn !== state.turnCounter) followupTally = { turn: state.turnCounter, n: 0 };
   if (followupTally.n >= FOLLOWUP_CAP) return;
   if (f.type === 'birna' && followupQueue.some(q => q.type === 'birna' && q.uid === f.uid)) return;
+  if (f.type === 'nekker' && followupQueue.some(q => q.type === 'nekker' && q.uid === f.uid)) return;
   if (f.type === 'morkvarg' && followupQueue.filter(q => q.type === 'morkvarg' && q.side === f.side).length >=
       state.players[f.side].graveyard.filter(c => c.morkvargReturn).length) return;
   followupTally.n++;
@@ -5015,12 +5102,311 @@ async function runFollowup(f) {
       }));
       await delay(150);
     }
+  } else if (f.type === 'larvae') {
+    if (!state || state.phase !== 'playing') return;
+    createTokensRightOf(f.side, { uid: f.uid }, 'larva_token', f.n);
+    render();
+    await delay(250);
+  } else if (f.type === 'nekker') {
+    const g = state.players[f.side].graveyard.find(c => c.uid === f.uid);
+    if (!g || !state || state.phase !== 'playing') return;
+    logMsg(`${f.side === 'player' ? 'Your' : "Opponent's"} ${g.name} returns from the discard pile!`);
+    await playFreeCardWithAnimation(f.side, g.uid);
+  } else if (f.type === 'egg') {
+    if (!state || state.phase !== 'playing') return;
+    const pred = c => c.tier === 'bronze' && !c.special && c.id !== 'monster_egg';
+    const eligible = state.players[f.side].graveyard.filter(pred);
+    if (eligible.length === 0) { logMsg('Monster Egg: no other Bronze card in the discard pile to play.'); return; }
+    let chosen;
+    if (f.side === 'player') chosen = await chooseCardFromDiscard('player', pred, 'Monster Egg: pick another Bronze card to play from your discard pile, or skip.');
+    else chosen = aiPickReviveTarget('ai', eligible);
+    if (!chosen) return;
+    logMsg(`${f.side === 'player' ? 'Your' : "Opponent's"} Monster Egg hatches: ${chosen.name} is played from the discard pile.`);
+    await playFreeCardWithAnimation(f.side, chosen.uid);
   } else if (f.type === 'morkvarg') {
     const m = state.players[f.side].graveyard.find(c => c.morkvargReturn);
     if (!m) return;
     logMsg(`${f.side === 'player' ? 'Your' : "Opponent's"} ${m.name} returns from the discard pile!`);
     await playFreeCardWithAnimation(f.side, m.uid);
   }
+}
+
+/* =========================================================
+   "DISCARDED FROM PLAY" EVENT (Monsters of Velen)
+   killCardFromBoard reports every card that leaves the board for a discard
+   pile (tokens included) as onCardDiscardedFromPlay(card, boardSide,
+   discarderSide): boardSide is the side whose board it was on, discarderSide
+   the side whose effect removed it (damage kills: the dealer's side; burn
+   effects: the side that played/activated them; eating effects: the active
+   side). Unattributed removals (no source, e.g. tutorial) fire nothing.
+   A passive only reacts when the discard was caused by its OWN side AND the
+   discarded card was on that same side ("one of your other cards") --
+   opponent-caused discards never trigger anything. One event per card.
+   Immediate reactions: Arachas Drone +1, Endrega Warrior refresh. Reactions
+   that must wait for the current ability (Archespore larvae, Monster Egg,
+   Nekker) go through the follow-up queue, which holds until it ends.
+========================================================= */
+function onCardDiscardedFromPlay(card, boardSide, discarderSide) {
+  if (!state || state.phase !== 'playing' || !discarderSide || boardSide !== discarderSide) return;
+  const D = discarderSide, p = state.players[D], who = D === 'player' ? 'Your' : "Opponent's";
+  p.board.filter(c => c.discardBuffSelf && c.uid !== card.uid).forEach(c => {
+    applyPowerDelta(c, 1, { side: D, card: c });
+    SFX.buff();
+    logMsg(`${who} ${c.name} gains 1 power.`);
+  });
+  p.board.filter(c => c.refreshOnOwnDiscard && c.uid !== card.uid && c.orderUsed).forEach(c => {
+    refreshOrder(c);
+    logMsg(`${who} ${c.name}'s Order is refreshed.`);
+  });
+  if (card.discardSelfTokens) queueFollowup({ type: 'larvae', side: D, uid: card.uid, n: card.discardSelfTokens });
+  if (card.discardSelfPlayBronze) queueFollowup({ type: 'egg', side: D });
+  p.graveyard.filter(g => g.nekkerReturn && g.uid !== card.uid).forEach(g => queueFollowup({ type: 'nekker', side: D, uid: g.uid }));
+}
+
+/* ---- Eating effect: jagged teeth sweep down the card in four bites with
+   flying crumbs (see .eatenCard). One consume sound per eating action. ---- */
+function spawnEatExtras(rect) {
+  const out = [];
+  const teeth = document.createElement('div');
+  teeth.className = 'eatTeeth';
+  teeth.style.left = rect.left + 'px';
+  teeth.style.top = (rect.top - 12) + 'px';
+  teeth.style.width = rect.width + 'px';
+  teeth.style.setProperty('--eatH', rect.height + 'px');
+  document.body.appendChild(teeth);
+  out.push(teeth);
+  for (let i = 0; i < 14; i++) {
+    const c = document.createElement('div');
+    c.className = 'eatCrumb';
+    const sz = 4 + Math.random() * 7;
+    c.style.width = sz + 'px'; c.style.height = sz + 'px';
+    const x0 = rect.left + Math.random() * rect.width, y0 = rect.top + (i % 4) * rect.height / 4 + 8;
+    c.style.left = x0 + 'px'; c.style.top = y0 + 'px';
+    document.body.appendChild(c);
+    const dx = (Math.random() - 0.5) * 120, dy = 20 + Math.random() * 90;
+    if (c.animate) c.animate([{ transform: 'translate(0,0) rotate(0)', opacity: 1 }, { transform: `translate(${dx}px,${dy}px) rotate(${Math.random() * 360}deg)`, opacity: 0 }],
+      { duration: 550 + Math.random() * 350, delay: (i % 4) * 200, easing: 'ease-out', fill: 'both' });
+    out.push(c);
+  }
+  return out;
+}
+function eatCardsFromPlay(cards, discarderSide) {
+  cards = cards.filter(c => c && findCardOwnerSide(c.uid));
+  if (!cards.length) return Promise.resolve();
+  SFX.consume();
+  return Promise.all(cards.map(c => new Promise(res => killCardFromBoard(c, { eat: true, discarderSide }, res))));
+}
+
+/* ---- Scripted Play / Order effects (Monsters of Velen). A card's
+   playScript(side, card) / an Order's orderScript(side, card, markUsed) is an
+   async function that does the whole effect (picks, eating, damage). While
+   one runs, damage batching holds the follow-up queue (Egg / Nekker /
+   Archespore) and scriptBusy blocks other actions. ---- */
+let scriptBusy = 0;
+async function runPlayScript(side, card, notifyInfo) {
+  scriptBusy++;
+  beginDamageBatch();
+  try {
+    const live = state.players[side].board.find(c => c.uid === card.uid) || card;
+    await card.playScript(side, live);
+  } catch (e) { console.error(e); }
+  finally {
+    scriptBusy = Math.max(0, scriptBusy - 1);
+    if (state) {
+      if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      render();
+    }
+    endDamageBatch();
+    if (state && side === 'player') maybeAutoEndTurn('player');
+  }
+}
+async function runOrderScript(side, card, ability) {
+  scriptBusy++;
+  beginDamageBatch();
+  let used = false;
+  const markUsed = () => {
+    if (used) return;
+    used = true;
+    card.orderUsed = true;
+    state.players[side].orderUsedThisTurn = true;
+    noteOrderUsed(side);
+    logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order.`);
+  };
+  try { await ability.orderScript(side, card, markUsed); } catch (e) { console.error(e); }
+  finally {
+    scriptBusy = Math.max(0, scriptBusy - 1);
+    if (state) render();
+    endDamageBatch();
+    if (state && side === 'player') maybeAutoEndTurn('player');
+  }
+  return used;
+}
+function ownOtherCardsInPlay(side, card) {
+  return state.players[side].board.filter(c => c.uid !== card.uid && !c.floatingSpecial);
+}
+
+// Player picks one of their own cards in play with the targeting UX (big
+// hovering prompt); the AI picks automatically. Resolves with the card, or
+// null (nothing to pick, or a skippable pick that was cancelled).
+function pickOwnCardInPlay(side, source, opts) {
+  opts = opts || {};
+  const cands = state.players[side].board.filter(c => !c.floatingSpecial && c.uid !== opts.excludeUid);
+  if (cands.length === 0) return Promise.resolve(null);
+  if (side === 'ai') return Promise.resolve(opts.aiPick ? opts.aiPick(cands) : cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0]);
+  const uids = new Set(cands.map(c => c.uid));
+  return new Promise(resolve => {
+    const go = () => {
+      if (!state || state.phase !== 'playing') { resolve(null); return; }
+      if (activeTargeting) { setTimeout(go, 100); return; }
+      startTargeting({ side: 'player', card: source, kind: 'pickOwn', banner: opts.banner || 'Pick a card to be discarded', mandatory: !!opts.mandatory,
+                       filter: c => uids.has(c.uid), onPick: c => resolve(c), onCancel: () => resolve(null) });
+    };
+    go();
+  });
+}
+// One damage hit of `amt` (player: targeting with cancel confirm; AI: kills first, nothing if wasted).
+function scriptDamageHit(side, card, amt) {
+  return startSequentialDamagePicks(side, card, 1, amt, null, null);
+}
+
+/* How much the AI hates losing a card (lower = better fodder): its power,
+   +2 for an unused Order, +1.5 per own passive that rewards discarding
+   (Drone/Endrega), minus what the card gives back when discarded (Archespore
+   makes 2 power of larvae, Egg plays a Bronze). */
+function aiKeepValue(c) {
+  let v = c.power;
+  const a = findOrderAbility(c);
+  if (a && !c.orderUsed) v += 2;
+  if (c.discardBuffSelf || c.refreshOnOwnDiscard) v += 1.5;
+  if (c.discardSelfTokens) v -= 2 * c.discardSelfTokens * 0.5 + 0.5;
+  if (c.discardSelfPlayBronze && state.players.ai.graveyard.some(g => g.tier === 'bronze' && !g.special && g.id !== 'monster_egg')) v -= 2;
+  if (c.tier === 'token') v -= 0.5;
+  return v;
+}
+function aiBestSacrifice(excludeUid) {
+  const cands = state.players.ai.board.filter(c => c.uid !== excludeUid && !c.floatingSpecial);
+  return cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0] || null;
+}
+// Bonus the AI sees in discarding one of its own cards (Drone / Endrega refresh / Nekker / Egg ...).
+function aiDiscardSynergy() {
+  const ai = state.players.ai;
+  let v = ai.board.filter(c => c.discardBuffSelf).length;
+  v += ai.board.filter(c => c.refreshOnOwnDiscard && c.orderUsed).length * 2;
+  v += ai.graveyard.filter(c => c.nekkerReturn).length * 2;
+  return v;
+}
+function aiBestKillTarget(amt) {
+  const alive = state.players.player.board.filter(c => c.power > 0 && !c.floatingSpecial);
+  const killable = alive.filter(c => c.power <= amt + aiBirnaBonus());
+  return killable.length ? pickDamageTarget(killable, (a, b) => a.power > b.power) : null;
+}
+function aiScriptCardValue(c) {
+  if (c.id === 'harpy' || c.id === 'monster_egg' || c.id === 'arachas_drone') return 1;
+  if (c.id === 'archespore') return 2;
+  if (c.id === 'cyclops') { const sac = aiBestSacrifice(c.uid), t = aiBestKillTarget(3); return sac && t ? Math.max(0, t.power - aiKeepValue(sac)) : 0; }
+  if (c.id === 'ghoul') { const sac = aiBestSacrifice(c.uid); return sac && aiKeepValue(sac) < 2 ? 1 : 0; }
+  return 0;
+}
+
+async function cyclopsPlay(side, card) {
+  let sac;
+  if (side === 'player') {
+    sac = await pickOwnCardInPlay('player', card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
+  } else {
+    const plan = state.aiComboPlan, planned = plan && state.players.player.board.find(c => c.uid === plan.targetUid && c.power > 0 && c.power <= 3);
+    const t = planned || aiBestKillTarget(3);
+    const s = aiBestSacrifice(card.uid);
+    sac = t && s && (planned || aiKeepValue(s) - aiDiscardSynergy() < t.power) ? s : null;
+  }
+  if (!sac) return;
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} devours ${sac.name}.`);
+  await eatCardsFromPlay([sac], side);
+  render();
+  await delay(200);
+  await scriptDamageHit(side, card, 3);
+}
+function harpyPlay(side, card) {
+  return (async () => {
+    await scriptDamageHit(side, card, 1);
+    if (!state || state.phase !== 'playing') return;
+    await delay(150);
+    createTokensRightOf(side, card, 'larva_token', 1);
+    render();
+    await delay(250);
+  })();
+}
+// Ghoul: discard one of your other cards; if you do, +2 power. Returns true if it did.
+async function ghoulEat(side, card, markUsed) {
+  let sac;
+  if (side === 'player') {
+    sac = await pickOwnCardInPlay('player', card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
+  } else {
+    const s = aiBestSacrifice(card.uid);
+    sac = s && aiKeepValue(s) - aiDiscardSynergy() < 2 ? s : null;
+  }
+  if (!sac) return false;
+  if (markUsed) markUsed();
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} devours ${sac.name}.`);
+  await eatCardsFromPlay([sac], side);
+  const live = state.players[side].board.find(c => c.uid === card.uid);
+  if (live) { applyPowerDelta(live, 2, { side, card: live }); SFX.buff(); logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${live.name} gains 2 power.`); }
+  render();
+  await delay(200);
+  return true;
+}
+function ghoulPlay(side, card) { return ghoulEat(side, card, null); }
+function ghoulOrder(side, card, markUsed) { return ghoulEat(side, card, markUsed); }
+function aiWantsGhoul(card) {
+  const s = aiBestSacrifice(card.uid);
+  return !!s && aiKeepValue(s) - aiDiscardSynergy() < 2;
+}
+async function forktailOrder(side, card, markUsed) {
+  let sac;
+  if (side === 'player') {
+    sac = await pickOwnCardInPlay('player', card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
+  } else {
+    const t = aiBestKillTarget(2), s = aiBestSacrifice(card.uid);
+    sac = t && s && aiKeepValue(s) - aiDiscardSynergy() < t.power ? s : null;
+  }
+  if (!sac) return;
+  markUsed();
+  logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} devours ${sac.name}.`);
+  await eatCardsFromPlay([sac], side);
+  render();
+  await delay(200);
+  const live = state.players[side].board.find(c => c.uid === card.uid) || card;
+  await scriptDamageHit(side, live, 2);
+}
+function aiWantsForktail(card) {
+  const t = aiBestKillTarget(2), s = aiBestSacrifice(card.uid);
+  return !!t && !!s && aiKeepValue(s) - aiDiscardSynergy() < t.power;
+}
+// Rotfiend: both players choose one of their own cards in play (the active
+// player first); once both have chosen, both are eaten at once, each counted
+// as discarded by the ACTIVE player. A player with nothing in play is skipped.
+async function rotfiendOrder(side, card, markUsed) {
+  const opp = otherSide(side);
+  const picks = {};
+  for (const s of [side, opp]) {
+    picks[s] = await pickOwnCardInPlay(s, card, { mandatory: true, banner: 'Pick a card to be discarded' });
+    if (s === 'ai') await delay(400);
+  }
+  markUsed();
+  const chosen = [picks[side], picks[opp]].filter(Boolean);
+  if (chosen.length === 0) { logMsg(`${card.name}'s Order finds nothing to discard.`); return; }
+  logMsg(`${card.name}'s Order: ${chosen.map(c => c.name).join(' and ')} ${chosen.length > 1 ? 'are' : 'is'} discarded.`);
+  await eatCardsFromPlay(chosen, side);
+  render();
+  await delay(200);
+}
+function aiWantsRotfiend(card) {
+  const ai = state.players.ai, me = state.players.player;
+  const mine = ai.board.filter(c => !c.floatingSpecial);
+  const theirs = me.board.filter(c => !c.floatingSpecial);
+  if (mine.length === 0 || theirs.length === 0) return false;
+  const myCost = Math.min(...mine.map(aiKeepValue));
+  const theirLoss = Math.min(...theirs.map(c => Math.max(0, c.power))); // the human will give up their cheapest card
+  return theirLoss + aiDiscardSynergy() - myCost >= 1;
 }
 
 /* "Passive: whenever you play a Gold card, this card gets played from your
@@ -5465,6 +5851,8 @@ function aiWantsSecondOrder(readyCount) {
 // turn before it (0 = no damage). Maxii: the AI knows its own top card.
 function aiPlayDamageFor(card, ordersUsed) {
   if (card.special) return 0;
+  if (card.playScriptDamage) return card.playScriptDamage; // Harpy
+  if (card.id === 'cyclops') { const sac = aiBestSacrifice(card.uid); return sac && aiKeepValue(sac) <= 2 ? 3 : 0; }
   if (card.playDiscardHighestIfOrders && ordersUsed >= card.playDiscardHighestIfOrders) return 0; // Dethmold's discard branch
   if (card.playDamageFromDeckTop) {
     const deck = state.players.ai.deck;
@@ -5784,6 +6172,16 @@ async function aiUseAvailableOrders(opts) {
     // on him first (it's used after the play -- see aiTakeTurn)
     if (ability.doublesSelf && opts.plan && ai.hand.some(c => c.playBuffRepeat || c.playBuffMulti)) { heldBack.add(readyCard.uid); continue; }
 
+    if (ability.orderScript) {
+      // scripted Orders (Rotfiend / Forktail / Ghoul): only when the AI's own check says it pays off
+      if (!ability.aiWants || !ability.aiWants(readyCard)) { heldBack.add(readyCard.uid); continue; }
+      await runOrderScript('ai', readyCard, ability);
+      if (!readyCard.orderUsed) heldBack.add(readyCard.uid);
+      render();
+      await buffReactionsIdle();
+      await delay(500);
+      continue;
+    }
     if (ability.isDiscardPlay) {
       const predicate = c => c.tier === ability.tier && (!ability.filter || ability.filter(c));
       const eligible = ai.graveyard.filter(predicate);
@@ -6035,6 +6433,10 @@ async function aiTakeTurn() {
         }
       });
       await resolvePendingPlayTokensAsync('ai', cardData);
+    }
+    if (cardData.playScript) {
+      await delay(400);
+      await runPlayScript('ai', cardData, null);
     }
     if (cardData.discardChoice) {
       await handleDiscardChoiceThenEndTurn('ai', cardData.discardChoice, null, cardData);
@@ -6563,6 +6965,8 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
   };
   if (card.playDamageOnlyFromHand) {
     finish(); // Morkvarg: its Play damage only applies when played from hand
+  } else if (card.playScript) {
+    runPlayScript(side, card, notifyInfo).then(() => { if (onDone) onDone(); });
   } else if (card.playDamageFromDeckTop) {
     startDeckTopDamage(side, card, notifyInfo, onDone);
   } else if (card.playRefreshOrder) {
@@ -6790,7 +7194,7 @@ function decideAiActionBase() {
   }
 
   // Siege Tower is worth 6 once 2+ Orders were used this turn, else 3.
-  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0) + aiPlayBuffValue(c) + aiPlayDamageValue(c) + (c.id === 'holger_blackhand' ? 3 : 0) + (c.id === 'udalryk' ? 3 : 0);
+  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0) + aiPlayBuffValue(c) + aiPlayDamageValue(c) + aiScriptCardValue(c) + (c.id === 'holger_blackhand' ? 3 : 0) + (c.id === 'udalryk' ? 3 : 0);
   const sorted = [...hand].sort((a, b) => pv(a) - pv(b));
   const weakest = sorted[0];
   const strongest = sorted[sorted.length - 1];
@@ -7356,9 +7760,16 @@ function squeezeRow(containerEl) {
 let activeTargeting = null; // { side, card, kind: 'order'|'playDamage', ability?, amount? }
 let hoverTargetUid = null;
 
+function setPickBanner(text) {
+  const b = document.getElementById('pickBanner');
+  if (!b) return;
+  b.textContent = text || '';
+  b.classList.toggle('show', !!text);
+}
 function startTargeting(session) {
   if (activeTargeting) return;
   activeTargeting = session;
+  setPickBanner(session.banner || '');
   hoverTargetUid = null;
   render();
   positionLineAtSource(session.card);
@@ -7410,6 +7821,13 @@ const cancelTargetDialog = document.getElementById('cancelTargetDialog');
 function requestCancelTargeting() {
   const session = activeTargeting;
   if (!session) return;
+  if (session.kind === 'pickOwn') {
+    if (session.mandatory) return; // no backing out of a mandatory pick
+    cancelTargeting();
+    render();
+    if (session.onCancel) session.onCancel();
+    return;
+  }
   // During the tutorial, targeting can only be resolved by actually
   // clicking a valid target -- clicking away (or pressing Escape) should
   // not let the player back out of a scripted targeted-ability beat.
@@ -7531,6 +7949,7 @@ function syncLockedTargetLines(svg, x1, y1, selectedUids) {
 
 function cancelTargeting() {
   activeTargeting = null;
+  setPickBanner('');
   hoverTargetUid = null;
   document.removeEventListener('mousemove', onTargetingMouseMove);
   document.removeEventListener('keydown', onTargetingKeydown);
@@ -7699,6 +8118,8 @@ function resolveTargeting(targetCard) {
       if (onDone) onDone();
       if (side === 'player') maybeAutoEndTurn('player');
     });
+  } else if (kind === 'pickOwn') {
+    if (activeTargetingSnapshot.onPick) activeTargetingSnapshot.onPick(targetCard);
   } else if (kind === 'specialDamage') {
     // A special floating card's own targeted effect (Alzur's Thunder) --
     // no ally-notify or turn-ending here, that's all handled by the special
@@ -7829,7 +8250,9 @@ function activateOrderAbility(side, card) {
   if (!isOrderReady(side, card)) return;
   const ability = findOrderAbility(card);
   if (!ability) return;
-  if (ability.isDiscardPlay) {
+  if (ability.orderScript) {
+    runOrderScript(side, card, ability);
+  } else if (ability.isDiscardPlay) {
     activateDiscardPlayOrder(side, card, ability);
   } else if (ability.seqBuff) {
     runSeqBuffOrder(side, card, ability);
@@ -8185,7 +8608,9 @@ function continueAfterPlayerPlay(playedCard, played) {
     // only after the discard/deck picker or targeting flow below finishes
     // for one that has extra steps.
     const notifyInfo = played ? { card: playedCard, isFirstPlayThisTurn: played.isFirstPlayThisTurn } : null;
-    if (playedCard && playedCard.discardChoice) {
+    if (playedCard && playedCard.playScript) {
+      runPlayScript('player', playedCard, notifyInfo);
+    } else if (playedCard && playedCard.discardChoice) {
       handleDiscardChoiceThenEndTurn('player', playedCard.discardChoice, notifyInfo);
     } else if (playedCard && playedCard.deckTopChoice) {
       handleDeckTopChoiceThenEndTurn('player', notifyInfo);

@@ -3226,6 +3226,262 @@ const MenuMusic = (() => {
 })();
 
 /* =========================================================
+   CONTROLLERS & ACTIONS (multiplayer prep -- see docs/multiplayer.md)
+   Each seat ('player' = this browser's seat, 'ai' = the opponent's seat)
+   has a controller. Interactive controllers (the local human, a remote
+   player, a test bot) answer the engine's decision requests with plain-JSON
+   actions that all enter the engine through submitAction -> applyAction:
+     { type: 'play', uid, index }   play a hand card (index = board slot or null)
+     { type: 'order', uid }         activate a ready Order
+     { type: 'endTurn' }            end the turn (draw happens automatically)
+     { type: 'pass' }               pass the round
+     { type: 'mulligan' }           swap the opening hand (once)
+     { type: 'mulliganDone' }       keep the hand / done mulliganing
+     { type: 'target', uid }        answer a targeting request (toggles in multi-selects)
+     { type: 'finish' }             "Done" on a multi-select
+     { type: 'cancel' }             back out / finish early (engine decides per kind)
+     { type: 'pick', uid }          answer a discard/deck pick (uid null = skip)
+   The AI controller is autonomous: it drives its own turn (aiTakeTurn) and
+   its in-flow choices are made by the AI policy in the engine's
+   non-interactive branches (isInteractive(side) === false). Its turn-level
+   decisions are recorded in the action log too (recordAction).
+========================================================= */
+const LocalHumanController = {
+  kind: 'local', interactive: true,
+  autoEndTurn: () => autoEndTurnEnabled,
+  // The local UI renders requests straight from engine state (targeting
+  // session, picker modals, mulligan overlay) and answers via submitAction.
+};
+const AIController = {
+  kind: 'ai', interactive: false,
+  onTurnStart(side) { aiTakeTurn(); },
+  mulligan(side) { aiMulligan(); },
+};
+/* RemoteController (PvP, step 2 -- NOT implemented yet). Interactive: the
+   engine sends it the same requests (onRequest) and waits; actions arriving
+   from the peer are fed to submitAction(side, action) after the transport
+   layer verified them. Hidden zones of the remote seat are placeholders until
+   revealed (see revealCard). autoEndTurn is false: the peer's own client
+   decides and sends 'endTurn'. */
+function makeRemoteController(transport) {
+  return {
+    kind: 'remote', interactive: true,
+    autoEndTurn: () => false,
+    onTurnStart(side) {},
+    onRequest(side, request) { if (transport && transport.onRequest) transport.onRequest(side, request); },
+  };
+}
+const controllers = { player: LocalHumanController, ai: AIController };
+function isInteractive(side) { return !!(controllers[side] && controllers[side].interactive); }
+function isLocalSide(side) { return !!(controllers[side] && controllers[side].kind === 'local'); }
+function possessive(side) { return side === 'player' ? 'Your' : "Opponent's"; }
+// After an interactive side's step resolves: offer the auto end-turn.
+function afterInteractiveStep(side) { if (isInteractive(side)) maybeAutoEndTurn(side); }
+function notifyRequest(side, request) {
+  const c = controllers[side];
+  if (c && c.onRequest) { try { c.onRequest(side, request); } catch (e) { console.error(e); } }
+}
+function scheduleTurnStart() {
+  if (!state) return;
+  const side = state.activeTurn, c = controllers[side];
+  if (c && c.onTurnStart) setTimeout(() => c.onTurnStart(side), 900);
+}
+// A targeting session described as a serializable request (no closures).
+function describeTargetingRequest(session) {
+  const all = [...state.players.player.board, ...state.players.ai.board];
+  const candidates = all.filter(c => !(session.excludeSelf && c.uid === session.card.uid) && (!session.filter || session.filter(c))).map(c => c.uid);
+  return { type: 'target', kind: session.kind, source: session.card.uid, candidates, selected: (session.selected || []).slice(),
+           max: session.max || 1, mandatory: !!session.mandatory, amount: session.amount || 0 };
+}
+function targetingCandidate(session, uid) {
+  const c = findCardByUid(uid);
+  if (!c || !findCardOwnerSide(uid)) return null;
+  if (session.excludeSelf && c.uid === session.card.uid) return null;
+  if (session.filter && !session.filter(c)) return null;
+  return c;
+}
+function isPlainJson(a) {
+  try { return JSON.stringify(JSON.parse(JSON.stringify(a))) === JSON.stringify(a); } catch (e) { return false; }
+}
+// Is `action` legal for `side` right now? (Every action, local or remote,
+// is checked here before it touches state.)
+function validateAction(side, a) {
+  if (!state || !a || typeof a.type !== 'string' || !isPlainJson(a)) return false;
+  const p = state.players[side];
+  if (!p) return false;
+  const myTurn = state.phase === 'playing' && state.activeTurn === side && !p.passed;
+  switch (a.type) {
+    case 'play':
+      return myTurn && !p.actedThisTurn && !buffReactionsBusy() && p.hand.some(c => c.uid === a.uid) &&
+             (a.index === null || a.index === undefined || (Number.isInteger(a.index) && a.index >= 0));
+    case 'order': {
+      const c = p.board.find(x => x.uid === a.uid);
+      return !!c && !activeTargeting && !buffReactionsBusy() && isOrderReady(side, c);
+    }
+    case 'endTurn':
+      return myTurn && !activeTargeting && !coinBusy && pendingPlayTokenSpawns === 0 && turnEndable(side);
+    case 'pass':
+      return myTurn && !activeTargeting && !p.actedThisTurn && !p.orderUsedThisTurn;
+    case 'mulligan':
+      return state.phase === 'mulligan' && !p.mulliganUsed && !(state.mulliganReady && state.mulliganReady[side]);
+    case 'mulliganDone':
+      return state.phase === 'mulligan' && !(state.mulliganReady && state.mulliganReady[side]);
+    case 'target':
+      return !!activeTargeting && activeTargeting.side === side && !!targetingCandidate(activeTargeting, a.uid);
+    case 'finish':
+      return !!activeTargeting && activeTargeting.side === side && activeTargeting.kind === 'pickMulti' &&
+             (!activeTargeting.mandatory || activeTargeting.selected.length >= activeTargeting.max);
+    case 'cancel':
+      return !!activeTargeting && activeTargeting.side === side;
+    case 'pick':
+      return !!pendingPick && pendingPick.side === side && (a.uid === null || pendingPick.uids.includes(a.uid));
+  }
+  return false;
+}
+let actionSeq = 0;
+function recordAction(side, action, by) {
+  if (!state) return;
+  state.actionLog = state.actionLog || [];
+  state.actionLog.push({ n: state.actionLog.length, side, by: by || controllers[side].kind, turn: state.turnCounter, ...action });
+}
+// The single entry point for decisions of interactive sides. Returns
+// whether the action was accepted.
+function submitAction(side, action) {
+  if (!validateAction(side, action)) return false;
+  recordAction(side, action);
+  applyAction(side, action);
+  return true;
+}
+function applyAction(side, a) {
+  switch (a.type) {
+    case 'play': performInteractivePlay(side, a.uid, a.index === undefined ? null : a.index); break;
+    case 'order': activateOrderAbility(side, state.players[side].board.find(c => c.uid === a.uid)); break;
+    case 'endTurn': endTurnWithDraw(side); break;
+    case 'pass': passTurn(side); render(); endTurn(side); break;
+    case 'mulligan': applyMulliganSwap(side); break;
+    case 'mulliganDone': applyMulliganDone(side); break;
+    case 'target': resolveTargeting(findCardByUid(a.uid)); break;
+    case 'finish': finishPickMulti(); break;
+    case 'cancel': applyTargetingCancel(activeTargeting); break;
+    case 'pick': resolvePendingPick(a.uid); break;
+  }
+}
+
+/* ---- Test bot + dev hooks (never active in normal play). A bot is an
+   interactive controller that answers requests and takes turns with random
+   but SEEDED choices, purely through submitAction -- i.e. through exactly
+   the path a remote player's actions will take. Used by the determinism
+   test: two pages with the same seeds must produce identical logs. ---- */
+function makeBotController(side, seed) {
+  const bot = { kind: 'bot', interactive: true, autoEndTurn: () => false, rng: makeRng('bot:' + side + ':' + seed), timer: null, waited: 0,
+                onRequest() {}, onTurnStart() {} };
+  bot.timer = setInterval(() => { try { botTick(bot, side); } catch (e) { console.error(e); } }, 120);
+  return bot;
+}
+function botAnimating() { return pendingKills > 0 || !!document.querySelector('.projectile, .flyingCard'); }
+function botTick(bot, side) {
+  if (controllers[side] !== bot) { clearInterval(bot.timer); return; }
+  if (!state) return;
+  const r = bot.rng, p = state.players[side];
+  if (state.phase === 'mulligan') {
+    if (state.mulliganReady && state.mulliganReady[side]) return;
+    if (!p.mulliganUsed && r.next() < 0.3) submitAction(side, { type: 'mulligan' });
+    submitAction(side, { type: 'mulliganDone' });
+    return;
+  }
+  if (state.phase !== 'playing' || botAnimating()) { bot.waited = 0; return; }
+  if (++bot.waited < 3) return; // let the engine settle for a few ticks
+  if (pendingPick && pendingPick.side === side) {
+    const u = pendingPick.uids;
+    submitAction(side, { type: 'pick', uid: r.next() < 0.15 ? null : u[r.int(u.length)] });
+    bot.waited = 0;
+    return;
+  }
+  if (activeTargeting) {
+    if (activeTargeting.side !== side) return;
+    const req = describeTargetingRequest(activeTargeting);
+    const multi = req.kind === 'pickMulti' || req.kind === 'playBuffMulti' || req.kind === 'orderMulti';
+    const fresh = req.candidates.filter(u => !req.selected.includes(u));
+    if (multi) {
+      if (fresh.length && (req.mandatory || r.next() < 0.7)) submitAction(side, { type: 'target', uid: fresh[r.int(fresh.length)] });
+      else if (req.kind === 'pickMulti') submitAction(side, { type: 'finish' }) || submitAction(side, { type: 'cancel' });
+      else submitAction(side, { type: 'cancel' });
+    } else if (!req.mandatory && r.next() < 0.08) {
+      submitAction(side, { type: 'cancel' });
+    } else if (req.candidates.length) {
+      submitAction(side, { type: 'target', uid: req.candidates[r.int(req.candidates.length)] });
+    } else {
+      submitAction(side, { type: 'cancel' });
+    }
+    bot.waited = 0;
+    return;
+  }
+  if (state.activeTurn !== side || p.passed) return;
+  if (buffReactionsBusy() || pendingPlayTokenSpawns > 0 || coinBusy) return;
+  const other = state.players[otherSide(side)];
+  const ready = p.board.filter(c => isOrderReady(side, c));
+  if (!p.actedThisTurn && !p.orderUsedThisTurn &&
+      (p.hand.length === 0 || (other.passed && totalPower(side) > totalPower(otherSide(side))) ||
+       (totalPower(side) > totalPower(otherSide(side)) + 12 && r.next() < 0.5))) {
+    submitAction(side, { type: 'pass' });
+  } else if (ready.length && r.next() < 0.6) {
+    submitAction(side, { type: 'order', uid: ready[r.int(ready.length)].uid });
+  } else if (!p.actedThisTurn && p.hand.length) {
+    submitAction(side, { type: 'play', uid: p.hand[r.int(p.hand.length)].uid, index: r.int(p.board.length + 1) });
+  } else if (p.actedThisTurn) {
+    submitAction(side, { type: 'endTurn' });
+  }
+  bot.waited = 0;
+}
+window.__gwaDev = {
+  setSeeds(seeds) { window.__gwaNextSeeds = seeds; },
+  setDecks(decks) { window.__gwaNextDecks = decks; },
+  useBot(side, seed) { controllers[side] = makeBotController(side, seed); },
+  useDefaultControllers() { controllers.player = LocalHumanController; controllers.ai = AIController; },
+  snapshot() {
+    if (!state) return null;
+    return { log: state.log.slice(), actions: (state.actionLog || []).slice(), phase: state.phase, scores: { ...state.scores },
+             roundScores: state.roundScores.slice(), seeds: state.seeds, view: publicView('player'),
+             hands: { player: state.players.player.hand.map(c => c.uid + ':' + c.id), ai: state.players.ai.hand.map(c => c.uid + ':' + c.id) },
+             decks: { player: state.players.player.deck.map(c => c.uid + ':' + c.id), ai: state.players.ai.deck.map(c => c.uid + ':' + c.id) } };
+  },
+};
+
+/* ---- Public vs private state (see docs/multiplayer.md) ----
+   Private per side: hand, deck (draw pile) and its order, the private seed.
+   Public: boards, discard piles, counts (hand/deck size), powers, flags,
+   turn/round state, the shared seed. publicView(viewer) is what a client may
+   show / send about the game; the opponent's hand and deck appear as
+   counts + opaque uids only. A hidden card is { uid, hidden: true }. */
+function hiddenCard(uid) { return { uid, hidden: true }; }
+function publicView(viewer) {
+  const strip = c => ({ uid: c.uid, id: c.id, power: c.power, basePower: c.basePower, owner: c.owner, orderUsed: !!c.orderUsed, playedTurn: c.playedTurn });
+  const sideView = (sd) => {
+    const p = state.players[sd], mine = sd === viewer;
+    return {
+      hand: mine ? p.hand.map(strip) : p.hand.map(c => hiddenCard(c.uid)), handCount: p.hand.length,
+      deck: mine ? p.deck.map(strip) : p.deck.map(c => hiddenCard(c.uid)), deckCount: p.deck.length,
+      board: p.board.map(strip), graveyard: p.graveyard.map(strip),
+      passed: p.passed, actedThisTurn: p.actedThisTurn, orderUsedThisTurn: p.orderUsedThisTurn, mulliganUsed: p.mulliganUsed,
+    };
+  };
+  return { round: state.round, turnCounter: state.turnCounter, activeTurn: state.activeTurn, phase: state.phase, scores: { ...state.scores },
+           startingPlayer: state.startingPlayer, players: { player: sideView('player'), ai: sideView('ai') } };
+}
+// In PvP the remote seat's hand/deck hold hiddenCard placeholders; when the
+// peer reveals a card (by playing / discarding / moving it) its identity
+// arrives as { uid, id } and the placeholder becomes a real card instance.
+function revealCard(side, uid, id) {
+  const base = CARD_DB[id];
+  if (!base) return null;
+  for (const zone of ['hand', 'deck']) {
+    const arr = state.players[side][zone], i = arr.findIndex(c => c.uid === uid);
+    if (i !== -1 && arr[i].hidden) { arr[i] = { ...base, uid, basePower: base.power, owner: side }; return arr[i]; }
+  }
+  return null;
+}
+
+/* =========================================================
    GAME STATE
 ========================================================= */
 
@@ -3245,10 +3501,15 @@ function newGameState() {
   pendingCustomDeck = null;
   const seeds = initMatchRng();
   tokenUidCounter = 0;
+  pendingKills = 0;
   nextCardUid.pending = { player: 0, ai: 0 };
   const startingPlayer = RNG.shared.next() < 0.5 ? 'player' : 'ai';
-  const playerDeck = finalizeDeck('player', customIds ? buildCustomDeck(customIds) : buildDeck(rngPrivate('player')));
-  const aiDeck = finalizeDeck('ai', buildDeck(rngPrivate('ai')));
+  // dev/test hook: window.__gwaNextDecks = { player?: [ids], ai?: [ids] } (consumed here)
+  const forcedDecks = window.__gwaNextDecks || {};
+  window.__gwaNextDecks = null;
+  const pIds = forcedDecks.player || customIds, aIds = forcedDecks.ai;
+  const playerDeck = finalizeDeck('player', pIds ? buildCustomDeck(pIds) : buildDeck(rngPrivate('player')));
+  const aiDeck = finalizeDeck('ai', aIds ? buildCustomDeck(aIds) : buildDeck(rngPrivate('ai')));
   return {
     seeds,                   // { shared, player, ai } -- in PvP each client only knows shared + its own
     uidCounters: nextCardUid.pending,
@@ -3441,7 +3702,7 @@ function triggerSecondOrderDiscardReturns(side) {
       } finally {
         pendingPlayTokenSpawns--;
         render();
-        if (side === 'player') maybeAutoEndTurn('player');
+        afterInteractiveStep(side);
       }
     }, 250);
   });
@@ -3742,16 +4003,16 @@ function startMultiRefresh(side, card, notifyInfo, onDone) {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
       resolve();
     };
     const targets = scoutRefreshTargets(side, liveCard);
     if (targets.length === 0) { logMsg(`${liveCard.name} has no used Order to refresh.`); finish(); return; }
-    if (side === 'player') {
+    if (isInteractive(side)) {
       const valid = new Set(targets.map(c => c.uid));
-      startTargeting({ side: 'player', card: liveCard, kind: 'playBuffMulti', max: liveCard.playRefreshMulti, selected: [],
+      startTargeting({ side, card: liveCard, kind: 'playBuffMulti', max: liveCard.playRefreshMulti, selected: [],
                        excludeSelf: true, filter: c => valid.has(c.uid), refreshProjectile: true,
-                       effect: t => { refreshOrder(t); logMsg(`Your ${liveCard.name} refreshes ${t.name}'s Order.`); },
+                       effect: t => { refreshOrder(t); logMsg(`${possessive(side)} ${liveCard.name} refreshes ${t.name}'s Order.`); },
                        notifyInfo, onDone: () => { if (onDone) onDone(); resolve(); } });
     } else {
       applyMultiRefresh('ai', liveCard, aiPickRefreshTargets(liveCard, liveCard.playRefreshMulti), finish);
@@ -3777,7 +4038,7 @@ function startScoutRefresh(side, card, notifyInfo, onDone) {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
       resolve();
     };
     const targets = scoutRefreshTargets(side, liveCard);
@@ -3786,9 +4047,9 @@ function startScoutRefresh(side, card, notifyInfo, onDone) {
       finish();
       return;
     }
-    if (side === 'player') {
+    if (isInteractive(side)) {
       const valid = new Set(targets.map(c => c.uid));
-      startTargeting({ side: 'player', card: liveCard, kind: 'playRefresh', notifyInfo,
+      startTargeting({ side, card: liveCard, kind: 'playRefresh', notifyInfo,
                        filter: c => valid.has(c.uid), onDone: () => resolve() });
     } else {
       applyScoutRefresh('ai', liveCard, aiPickScoutTarget(liveCard), finish);
@@ -3863,7 +4124,7 @@ function beginBuffBatch() { buffBatchDepth++; }
 function endBuffBatch() { buffBatchDepth = Math.max(0, buffBatchDepth - 1); scheduleBuffReactions(); }
 function buffReactionsIdle() {
   return new Promise(resolve => {
-    const check = () => { if (!buffReactionsBusy()) resolve(); else setTimeout(check, 50); };
+    const check = () => { if (!buffReactionsBusy() && pendingKills === 0) resolve(); else setTimeout(check, 50); };
     check();
   });
 }
@@ -3948,7 +4209,7 @@ function schedulePaulieReturn(side) {
     pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
     if (state) {
       render();
-      if (state.phase === 'playing' && state.activeTurn === 'player') maybeAutoEndTurn('player');
+      if (state.phase === 'playing' && isInteractive(state.activeTurn)) maybeAutoEndTurn(state.activeTurn);
     }
   };
   const wait = async () => {
@@ -3988,7 +4249,7 @@ async function processNextBuffReaction() {
     pendingPlayTokenSpawns--;
     if (state) {
       render();
-      if (state.phase === 'playing' && state.activeTurn === 'player') maybeAutoEndTurn('player');
+      if (state.phase === 'playing' && isInteractive(state.activeTurn)) maybeAutoEndTurn(state.activeTurn);
     }
     return;
   }
@@ -4012,16 +4273,16 @@ function runBuffReaction(r) {
     if (r.type === 'chariot') {
       const others = [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== card.uid && !c.floatingSpecial);
       if (others.length === 0) { resolve(); return; }
-      if (side === 'player') {
-        logMsg(`Your ${card.name} lets you give another card +${card.chariotOnOwnerBuff}.`);
-        startTargeting({ side: 'player', card, kind: 'reactionBuff', excludeSelf: true, amount: card.chariotOnOwnerBuff,
+      if (isInteractive(side)) {
+        logMsg(`${side === 'player' ? `Your ${card.name} lets you` : `Opponent's ${card.name} lets them`} give another card +${card.chariotOnOwnerBuff}.`);
+        startTargeting({ side, card, kind: 'reactionBuff', excludeSelf: true, amount: card.chariotOnOwnerBuff,
                          onDone: () => { render(); resolve(); } });
       } else {
         const target = aiPickBuffTarget(card, true);
         if (!target) { resolve(); return; }
         shootProjectile(card.uid, target.uid, () => {
           applyPowerDelta(target, card.chariotOnOwnerBuff, { side, card });
-          logMsg(`Opponent's ${card.name} gives ${target.name} +${card.chariotOnOwnerBuff}.`);
+          logMsg(`${possessive(side)} ${card.name} gives ${target.name} +${card.chariotOnOwnerBuff}.`);
           render();
           resolve();
         }, 'buff');
@@ -4094,7 +4355,7 @@ function startSequentialBuffPicks(side, card, n, notifyInfo, onDone, opts) {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
       resolve();
     };
     let left = n;
@@ -4103,14 +4364,14 @@ function startSequentialBuffPicks(side, card, n, notifyInfo, onDone, opts) {
       const others = [...state.players.player.board, ...state.players.ai.board].filter(c => (includeSelf || c.uid !== liveCard.uid) && !c.floatingSpecial);
       if (others.length === 0) { finish(); return; }
       left--;
-      if (side === 'player') {
+      if (isInteractive(side)) {
         // startTargeting ignores a request while another session is open --
         // wait for it rather than silently dropping this pick (which would
         // leave the sequence, and the turn hold, open forever)
         const startPick = () => {
           if (!state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
           if (activeTargeting) { setTimeout(startPick, 100); return; }
-          startTargeting({ side: 'player', card: liveCard, kind: 'playBuffSeq', excludeSelf: !includeSelf, amount: amt,
+          startTargeting({ side, card: liveCard, kind: 'playBuffSeq', excludeSelf: !includeSelf, amount: amt,
                            onPicked: () => { picked++; next(); }, onCancel: finish });
         };
         startPick();
@@ -4190,14 +4451,14 @@ function startMercenaryMove(side, card, notifyInfo, onDone) {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
       resolve();
     };
     const targets = mercenaryMoveTargets(liveCard);
     if (targets.length === 0) { finish(); return; }
-    if (side === 'player') {
+    if (isInteractive(side)) {
       const valid = new Set(targets.map(c => c.uid));
-      startTargeting({ side: 'player', card: liveCard, kind: 'playMove', notifyInfo,
+      startTargeting({ side, card: liveCard, kind: 'playMove', notifyInfo,
                        filter: c => valid.has(c.uid), onDone: () => resolve() });
     } else {
       const t = aiPickMercenaryTarget(liveCard);
@@ -4401,15 +4662,27 @@ function applyDamage(card, amount, source) {
 // Removes a card from whichever board it's on and sends it to its owner's
 // graveyard, with a fly-to-discard-pile animation. opts.flame plays a
 // burning visual instead of the normal damage death-flash (used by Scorch).
+// Kills whose removal from the board is still pending (death/burn/eat
+// animation running). AI decisions and test bots wait for 0 so the order of
+// state changes never depends on animation timing (determinism).
+let pendingKills = 0;
+// Run fn after `minDelay` ms once no kill is pending (see pendingKills).
+function afterKillsSettle(fn, minDelay) {
+  setTimeout(function chk() { if (pendingKills === 0) fn(); else setTimeout(chk, 40); }, minDelay || 0);
+}
+function killsSettled(minDelay) { return new Promise(res => afterKillsSettle(res, minDelay)); }
 function killCardFromBoard(card, opts, onDone) {
   opts = opts || {};
   const side = findCardOwnerSide(card.uid);
   if (!side) { if (onDone) onDone(); return; }
+  pendingKills++;
+  let counted = true;
+  const settle = () => { if (counted) { counted = false; pendingKills = Math.max(0, pendingKills - 1); } };
 
   const finishKill = () => {
     const p = state.players[side];
     const idx = p.board.findIndex(c => c.uid === card.uid);
-    if (idx === -1) { if (onDone) onDone(); return; }
+    if (idx === -1) { settle(); if (onDone) onDone(); return; }
     const liveEl = document.querySelector(`.card[data-uid="${card.uid}"]`);
     const displaySnapshot = { ...card }; // keep its last on-field power for the flight
     p.board.splice(idx, 1);
@@ -4417,6 +4690,7 @@ function killCardFromBoard(card, opts, onDone) {
     logMsg(opts.eat ? `${card.name} is eaten and discarded!` : `${card.name} is destroyed!`);
     // "discarded from play" event -- reported with the side whose effect caused it
     try { onCardDiscardedFromPlay(card, side, opts.discarderSide || null); } catch (e) { console.error(e); }
+    settle();
     if (card.tier === 'token') { if (liveEl) liveEl.style.visibility = 'hidden'; if (onDone) onDone(); return; } // vanishes, no flight to the discard pile
     if (liveEl) {
       const pileEl = document.getElementById(cardOwner(card, side) === 'player' ? 'discardPileMe' : 'discardPileOpp');
@@ -4613,7 +4887,7 @@ function applyMultiDamage(side, card, targets, amount, onDone) {
       applyDamage(live, amount, { side, card });
       logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} deals ${amount} damage to ${live.name}.`);
       render();
-      setTimeout(next, 120);
+      afterKillsSettle(next, 120);
     });
   };
   next();
@@ -4708,7 +4982,7 @@ function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone, opts
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
       resolve();
     };
     const aiTarget = () => {
@@ -4729,22 +5003,25 @@ function startSequentialDamagePicks(side, card, n, amt, notifyInfo, onDone, opts
       if (left <= 0 || !state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
       const all = [...state.players.player.board, ...state.players.ai.board].filter(c => c.power > 0 && !c.floatingSpecial);
       if (all.length === 0) { finish(); return; }
-      if (side === 'player') {
+      if (isInteractive(side)) {
         const startPick = () => {
           if (!state || state.phase !== 'playing' || !findCardOwnerSide(liveCard.uid)) { finish(); return; }
           if (activeTargeting) { setTimeout(startPick, 100); return; }
           left--;
-          startTargeting({ side: 'player', card: liveCard, kind: 'playDamageSeq', amount: amt, filter: c => c.power > 0,
+          startTargeting({ side, card: liveCard, kind: 'playDamageSeq', amount: amt, filter: c => c.power > 0,
                            orderMode: !!opts.order, getPicked: () => picked,
                            onPicked: () => { picked++; next(); }, onCancel: finish });
         };
         startPick();
       } else {
-        const target = aiTarget();
-        if (!target) { finish(); return; }
-        left--;
-        last = target.uid;
-        setTimeout(() => applyPlayDamage('ai', liveCard, amt, target, () => { picked++; render(); next(); }), 300);
+        // decide only once earlier kills have left the board (determinism)
+        afterKillsSettle(() => {
+          const target = aiTarget();
+          if (!target) { finish(); return; }
+          left--;
+          last = target.uid;
+          setTimeout(() => applyPlayDamage('ai', liveCard, amt, target, () => { picked++; render(); next(); }), 300);
+        });
       }
     };
     next();
@@ -4816,16 +5093,16 @@ function resolveAlzursThunder(ctx) {
     }
     if (ctx.onResolved) ctx.onResolved();
   };
-  if (side === 'player') {
+  if (isInteractive(side)) {
     const validTargets = [...state.players.player.board, ...state.players.ai.board]
       .filter(c => c.uid !== card.uid && c.tier === 'bronze');
     if (validTargets.length === 0) {
-      logMsg('Your Alzur\'s Thunder finds no Bronze card to strike.');
+      logMsg(`${possessive(side)} Alzur's Thunder finds no Bronze card to strike.`);
       finishResolve();
       return;
     }
     startTargeting({
-      side: 'player', card, kind: 'specialDamage', amount: 4,
+      side, card, kind: 'specialDamage', amount: 4,
       filter: c => c.tier === 'bronze',
       onDone: finishResolve,
     });
@@ -4912,7 +5189,7 @@ async function handleDeckTopChoiceThenEndTurn(side, notifyInfo) {
   const finish = () => {
     if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
     render();
-    if (side === 'player') maybeAutoEndTurn('player');
+    afterInteractiveStep(side);
   };
   const deck = state.players[side].deck;
   if (deck.length === 0) {
@@ -4921,8 +5198,8 @@ async function handleDeckTopChoiceThenEndTurn(side, notifyInfo) {
     return;
   }
   let chosen;
-  if (side === 'player') {
-    chosen = await chooseCardFromDeck('player', 'Look at your deck and choose a card to put on top.');
+  if (isInteractive(side)) {
+    chosen = await chooseCardFromDeck(side, 'Look at your deck and choose a card to put on top.');
   } else {
     chosen = deck.slice().sort((a, b) => b.power - a.power)[0];
   }
@@ -4946,7 +5223,7 @@ async function handleDeckBottomChoiceThenEndTurn(side, notifyInfo) {
   const finish = () => {
     if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
     render();
-    if (side === 'player') maybeAutoEndTurn('player');
+    afterInteractiveStep(side);
   };
   const targetSide = otherSide(side);
   const deck = state.players[targetSide].deck;
@@ -4956,12 +5233,13 @@ async function handleDeckBottomChoiceThenEndTurn(side, notifyInfo) {
     return;
   }
   let chosen;
-  if (side === 'player') {
+  if (isInteractive(side)) {
+    // HIDDEN INFO: the chooser looks at the OPPONENT's private deck (see docs/multiplayer.md)
     chosen = await chooseCardFromDeck(
       targetSide,
       "Look at your opponent's deck and choose a card to put on the bottom.",
       "Choose a Card to Put at the Bottom",
-      { titleRed: true }
+      { titleRed: true, chooser: side }
     );
   } else {
     chosen = deck.slice().sort((a, b) => b.power - a.power)[0];
@@ -5164,7 +5442,7 @@ function resolveAfterOpponentPlay(side, playedCard) {
     pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
     if (state) {
       render();
-      if (state.phase === 'playing' && state.activeTurn === 'player') maybeAutoEndTurn('player');
+      if (state.phase === 'playing' && isInteractive(state.activeTurn)) maybeAutoEndTurn(state.activeTurn);
     }
   };
   const next = () => {
@@ -5236,7 +5514,7 @@ async function processFollowup(waited) {
     pendingPlayTokenSpawns = Math.max(0, pendingPlayTokenSpawns - 1);
     if (state) {
       render();
-      if (state.phase === 'playing' && state.activeTurn === 'player') maybeAutoEndTurn('player');
+      if (state.phase === 'playing' && isInteractive(state.activeTurn)) maybeAutoEndTurn(state.activeTurn);
     }
     return;
   }
@@ -5255,7 +5533,7 @@ async function runFollowup(f) {
         render();
         res();
       }));
-      await delay(150);
+      await killsSettled(150);
     }
   } else if (f.type === 'larvae') {
     if (!state || state.phase !== 'playing') return;
@@ -5274,7 +5552,7 @@ async function runFollowup(f) {
       const eligible = state.players[f.side].graveyard.filter(pred);
       if (eligible.length === 0) { if (i === 0) logMsg('Whispering Hillock: no Bronze card in the discard pile to play.'); return; }
       let chosen;
-      if (f.side === 'player') chosen = await chooseCardFromDiscard('player', pred, `Whispering Hillock: pick a Bronze card to play from your discard pile (${i + 1} of 2), or skip.`);
+      if (isInteractive(f.side)) chosen = await chooseCardFromDiscard(f.side, pred, `Whispering Hillock: pick a Bronze card to play from your discard pile (${i + 1} of 2), or skip.`);
       else chosen = aiPickReviveTarget('ai', eligible);
       if (!chosen) return;
       logMsg(`${f.side === 'player' ? 'Your' : "Opponent's"} Whispering Hillock calls up ${chosen.name} from the discard pile.`);
@@ -5287,7 +5565,7 @@ async function runFollowup(f) {
     const eligible = state.players[f.side].graveyard.filter(pred);
     if (eligible.length === 0) { logMsg('Monster Egg: no other Bronze card in the discard pile to play.'); return; }
     let chosen;
-    if (f.side === 'player') chosen = await chooseCardFromDiscard('player', pred, 'Monster Egg: pick another Bronze card to play from your discard pile, or skip.');
+    if (isInteractive(f.side)) chosen = await chooseCardFromDiscard(f.side, pred, 'Monster Egg: pick another Bronze card to play from your discard pile, or skip.');
     else chosen = aiPickReviveTarget('ai', eligible);
     if (!chosen) return;
     logMsg(`${f.side === 'player' ? 'Your' : "Opponent's"} Monster Egg hatches: ${chosen.name} is played from the discard pile.`);
@@ -5391,7 +5669,7 @@ async function runPlayScript(side, card, notifyInfo) {
       render();
     }
     endDamageBatch();
-    if (state && side === 'player') maybeAutoEndTurn('player');
+    if (state) afterInteractiveStep(side);
   }
 }
 async function runOrderScript(side, card, ability) {
@@ -5411,7 +5689,7 @@ async function runOrderScript(side, card, ability) {
     scriptBusy = Math.max(0, scriptBusy - 1);
     if (state) render();
     endDamageBatch();
-    if (state && side === 'player') maybeAutoEndTurn('player');
+    if (state) afterInteractiveStep(side);
   }
   return used;
 }
@@ -5426,13 +5704,13 @@ function pickOwnCardInPlay(side, source, opts) {
   opts = opts || {};
   const cands = opts.cands || state.players[side].board.filter(c => !c.floatingSpecial && c.uid !== opts.excludeUid);
   if (cands.length === 0) return Promise.resolve(null);
-  if (side === 'ai') return Promise.resolve(opts.aiPick ? opts.aiPick(cands) : cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0]);
+  if (!isInteractive(side)) return Promise.resolve(opts.aiPick ? opts.aiPick(cands) : cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0]);
   const uids = new Set(cands.map(c => c.uid));
   return new Promise(resolve => {
     const go = () => {
       if (!state || state.phase !== 'playing') { resolve(null); return; }
       if (activeTargeting) { setTimeout(go, 100); return; }
-      startTargeting({ side: 'player', card: source, kind: 'pickOwn', banner: opts.banner || 'Pick a card to be discarded', mandatory: !!opts.mandatory,
+      startTargeting({ side, card: source, kind: 'pickOwn', banner: opts.banner || 'Pick a card to be discarded', mandatory: !!opts.mandatory,
                        filter: c => uids.has(c.uid), onPick: c => resolve(c), onCancel: () => resolve(null) });
     };
     go();
@@ -5500,8 +5778,8 @@ function aiScriptCardValue(c) {
 
 async function cyclopsPlay(side, card) {
   let sac;
-  if (side === 'player') {
-    sac = await pickOwnCardInPlay('player', card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
+  if (isInteractive(side)) {
+    sac = await pickOwnCardInPlay(side, card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
   } else {
     const plan = state.aiComboPlan, planned = plan && state.players.player.board.find(c => c.uid === plan.targetUid && c.power > 0 && c.power <= 3);
     const t = planned || aiBestKillTarget(3);
@@ -5528,8 +5806,8 @@ function harpyPlay(side, card) {
 // Ghoul: discard one of your other cards; if you do, +2 power. Returns true if it did.
 async function ghoulEat(side, card, markUsed) {
   let sac;
-  if (side === 'player') {
-    sac = await pickOwnCardInPlay('player', card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
+  if (isInteractive(side)) {
+    sac = await pickOwnCardInPlay(side, card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
   } else {
     const s = aiBestSacrifice(card.uid);
     sac = s && aiKeepValue(s) - aiDiscardSynergy() < 2 ? s : null;
@@ -5552,8 +5830,8 @@ function aiWantsGhoul(card) {
 }
 async function forktailOrder(side, card, markUsed) {
   let sac;
-  if (side === 'player') {
-    sac = await pickOwnCardInPlay('player', card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
+  if (isInteractive(side)) {
+    sac = await pickOwnCardInPlay(side, card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
   } else {
     const t = aiBestKillTarget(2), s = aiBestSacrifice(card.uid);
     sac = t && s && aiKeepValue(s) - aiDiscardSynergy() < t.power ? s : null;
@@ -5611,8 +5889,8 @@ async function eatOwnChoice(side, card, o) {
   if (cands.length === 0) return null;
   let sac;
   if (o.mandatory && cands.length === 1 && cands[0].uid === card.uid) sac = cands[0];
-  else if (side === 'ai') sac = o.aiPick ? o.aiPick(cands) : cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0];
-  else sac = await pickOwnCardInPlay('player', card, { cands, mandatory: !!o.mandatory,
+  else if (!isInteractive(side)) sac = o.aiPick ? o.aiPick(cands) : cands.slice().sort((a, b) => aiKeepValue(a) - aiKeepValue(b))[0];
+  else sac = await pickOwnCardInPlay(side, card, { cands, mandatory: !!o.mandatory,
     banner: o.mandatory ? 'Pick a card to be discarded' : 'Pick a card to discard (click away to skip)' });
   if (!sac || !state || state.phase !== 'playing') return null;
   logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} ${sac.uid === card.uid ? 'devours itself' : 'devours ' + sac.name}.`);
@@ -5627,12 +5905,12 @@ async function giveBuffChoice(side, source, amt) {
   const all = [...state.players.player.board, ...state.players.ai.board].filter(c => !c.floatingSpecial && c.uid !== source.uid);
   if (all.length === 0 || !state || state.phase !== 'playing') return null;
   let t;
-  if (side === 'ai') {
+  if (!isInteractive(side)) {
     const mine = all.filter(c => state.players.ai.board.some(x => x.uid === c.uid));
     t = mine.slice().sort((a, b) => ((findOrderAbility(b) && !b.orderUsed ? 1 : 0) - (findOrderAbility(a) && !a.orderUsed ? 1 : 0)) || b.power - a.power)[0];
     if (!t) return null;
   } else {
-    t = await pickOwnCardInPlay('player', live, { cands: all, mandatory: true, banner: `Pick a card to give +${amt}` });
+    t = await pickOwnCardInPlay(side, live, { cands: all, mandatory: true, banner: `Pick a card to give +${amt}` });
   }
   if (!t) return null;
   await new Promise(res => shootProjectile(live.uid, t.uid, () => {
@@ -5756,7 +6034,7 @@ function aiWhispessTarget(card) {
   return t.slice().sort((a, b) => score(b) - score(a))[0] || null;
 }
 async function whispessEat(side, card, markUsed) {
-  if (side === 'ai') { // decide before eating: only worth it with an opposing card to steal
+  if (!isInteractive(side)) { // decide before eating: only worth it with an opposing card to steal
     const t = aiWhispessTarget(card), s = aiBestSacrifice(card.uid);
     if (!t || !s || aiKeepValue(s) - aiDiscardSynergy() >= t.power * 1.5 + 0.5) return false;
   }
@@ -5767,8 +6045,8 @@ async function whispessEat(side, card, markUsed) {
   const targets = whispessTargets(live);
   if (targets.length === 0) { logMsg(`${card.name} finds no card with 2 or less power to move.`); return true; }
   let t;
-  if (side === 'ai') t = aiWhispessTarget(live);
-  else t = await pickOwnCardInPlay('player', live, { cands: targets, mandatory: true, banner: 'Pick a card with 2 or less power to move to the other side' });
+  if (!isInteractive(side)) t = aiWhispessTarget(live);
+  else t = await pickOwnCardInPlay(side, live, { cands: targets, mandatory: true, banner: 'Pick a card with 2 or less power to move to the other side' });
   if (!t) return true;
   await new Promise(res => moveCardToOtherSide(t, res));
   await delay(200);
@@ -5792,7 +6070,7 @@ function pickMultiCards(side, source, cands, o) {
       if (!state || state.phase !== 'playing') { resolve([]); return; }
       if (activeTargeting) { setTimeout(go, 100); return; }
       const uids = new Set(cands.map(c => c.uid));
-      const sess = { side: 'player', card: source, kind: 'pickMulti', mandatory: !!o.mandatory, selected: [], max, auto: !!o.auto, baseBanner: o.banner || 'Pick cards',
+      const sess = { side, card: source, kind: 'pickMulti', mandatory: !!o.mandatory, selected: [], max, auto: !!o.auto, baseBanner: o.banner || 'Pick cards',
                      filter: c => uids.has(c.uid), resolve };
       startTargeting(sess);
       updatePickMultiUI();
@@ -5802,7 +6080,7 @@ function pickMultiCards(side, source, cands, o) {
 }
 function updatePickMultiUI() {
   const s = activeTargeting;
-  if (!s || s.kind !== 'pickMulti') return;
+  if (!s || s.kind !== 'pickMulti' || !isLocalSide(s.side)) return;
   setPickBanner(`${s.baseBanner} (${s.selected.length}${s.max < 99 ? ' / ' + s.max : ''} selected)`);
   let b = document.getElementById('pickDoneBtn');
   if (!s.auto) {
@@ -5810,7 +6088,7 @@ function updatePickMultiUI() {
       b = document.createElement('button');
       b.id = 'pickDoneBtn';
       b.style.cssText = 'position:fixed;left:50%;top:40%;transform:translateX(-50%);z-index:1260;padding:10px 34px;font-size:20px;font-weight:700;cursor:pointer;background:#2b1d0e;color:#f3d9a0;border:2px solid #c9a24a;border-radius:8px;box-shadow:0 2px 12px #000a;';
-      b.addEventListener('click', (e) => { e.stopPropagation(); finishPickMulti(); });
+      b.addEventListener('click', (e) => { e.stopPropagation(); if (activeTargeting) submitAction(activeTargeting.side, { type: 'finish' }); });
       document.body.appendChild(b);
     }
     b.textContent = s.selected.length ? `Done (${s.selected.length})` : 'Done (none)';
@@ -5841,8 +6119,8 @@ async function dagonPlay(side, card) {
   const cands = ownCardsInPlay(side);
   let chosen;
   if (cands.length <= 2) chosen = cands.slice(); // nothing to choose: they are all eaten
-  else if (side === 'ai') chosen = cands.slice().sort((a, b) => (aiKeepValue(a) + (a.uid === card.uid ? 100 : 0)) - (aiKeepValue(b) + (b.uid === card.uid ? 100 : 0))).slice(0, 2);
-  else chosen = await pickMultiCards('player', card, cands, { max: 2, mandatory: true, auto: true, banner: 'Pick two cards to be discarded' });
+  else if (!isInteractive(side)) chosen = cands.slice().sort((a, b) => (aiKeepValue(a) + (a.uid === card.uid ? 100 : 0)) - (aiKeepValue(b) + (b.uid === card.uid ? 100 : 0))).slice(0, 2);
+  else chosen = await pickMultiCards(side, card, cands, { max: 2, mandatory: true, auto: true, banner: 'Pick two cards to be discarded' });
   if (!chosen.length || !state || state.phase !== 'playing') return;
   logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} devours ${chosen.map(c => c.uid === card.uid ? 'itself' : c.name).join(' and ')}.`);
   await eatCardsFromPlay(chosen, side);
@@ -5863,8 +6141,8 @@ async function glustyworpPlay(side, card) {
   const cands = ownOtherCardsInPlay(side, card);
   if (!cands.length) return;
   let chosen;
-  if (side === 'ai') chosen = aiGlustySacs(card);
-  else chosen = await pickMultiCards('player', card, cands, { max: 99, mandatory: false, banner: 'Pick any number of cards to discard (+2 power each)' });
+  if (!isInteractive(side)) chosen = aiGlustySacs(card);
+  else chosen = await pickMultiCards(side, card, cands, { max: 99, mandatory: false, banner: 'Pick any number of cards to discard (+2 power each)' });
   if (!chosen.length || !state || state.phase !== 'playing') return;
   logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${card.name} devours ${chosen.map(c => c.name).join(', ')}.`);
   await eatCardsFromPlay(chosen, side);
@@ -5881,8 +6159,8 @@ async function glustyworpPlay(side, card) {
 // Kayran: may discard one of your other cards; if you do, deal 5 damage (like Cyclops).
 async function kayranPlay(side, card) {
   let sac;
-  if (side === 'player') {
-    sac = await pickOwnCardInPlay('player', card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
+  if (isInteractive(side)) {
+    sac = await pickOwnCardInPlay(side, card, { excludeUid: card.uid, banner: 'Pick a card to discard (click away to skip)' });
   } else {
     const plan = state.aiComboPlan, planned = plan && state.players.player.board.find(c => c.uid === plan.targetUid && c.power > 0 && c.power <= 5);
     const t = planned || aiBestKillTarget(5);
@@ -5976,7 +6254,7 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo, sourceCard
   const finish = () => {
     if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
     render();
-    if (side === 'player') maybeAutoEndTurn('player');
+    afterInteractiveStep(side);
   };
   const filterFn = (sourceCard && sourceCard.discardFilter) || (() => true);
   const eligible = state.players[side].graveyard.filter(c => c.tier === tier && filterFn(c));
@@ -5990,14 +6268,14 @@ async function handleDiscardChoiceThenEndTurn(side, tier, notifyInfo, sourceCard
     playDeferredVoice(null); // ability fizzled -- speak right away
     finish();
     return;
-  } else if (side === 'player') {
-    const chosen = await chooseCardFromDiscard('player', c => c.tier === tier && filterFn(c), `Pick a ${tier} card from the discard pile, or skip.`);
+  } else if (isInteractive(side)) {
+    const chosen = await chooseCardFromDiscard(side, c => c.tier === tier && filterFn(c), `Pick a ${tier} card from the discard pile, or skip.`);
     playDeferredVoice(chosen); // at the Select click (or picker close on skip)
     if (chosen) {
       if (chosen.special) {
-        await playFreeSpecialCardWithAnimation('player', chosen.uid);
+        await playFreeSpecialCardWithAnimation(side, chosen.uid);
       } else {
-        await playFreeCardWithAnimation('player', chosen.uid);
+        await playFreeCardWithAnimation(side, chosen.uid);
         allowOrderNow(chosen.uid);
       }
     }
@@ -6157,8 +6435,10 @@ function endTurn(side) {
       tutorialManualAiPauseArmed = false;
       tutorialAiTurnPending = true;
     } else {
-      setTimeout(aiTakeTurn, 900);
+      scheduleTurnStart();
     }
+  } else if (state.phase === 'playing') {
+    scheduleTurnStart();
   }
 }
 
@@ -6257,7 +6537,7 @@ function endRound() {
       redrawToFour('ai');
       state.phase = 'playing';
       render();
-      if (state.activeTurn === 'ai') setTimeout(aiTakeTurn, 900);
+      scheduleTurnStart();
     });
   }, 550);
 }
@@ -6832,6 +7112,7 @@ async function aiTakeTurn() {
 
   // Comfortably ahead at the start of its turn: sometimes just pass.
   if (aiShouldPassWhenAhead()) {
+    recordAction('ai', { type: 'pass' });
     await delay(500);
     passTurn('ai');
     render();
@@ -6842,6 +7123,7 @@ async function aiTakeTurn() {
   // Player passed and the round is out of reach even optimistically: concede it.
   if (aiShouldConcedeRound()) {
     logMsg('Opponent concedes the round to save its cards.');
+    recordAction('ai', { type: 'pass' });
     await delay(500);
     passTurn('ai');
     render();
@@ -6859,6 +7141,7 @@ async function aiTakeTurn() {
   if (ai.hand.length === 0) {
     // Empty hand at the start of the turn: no Orders are usable, nothing to
     // play -- pass (safety net so the turn can never get stuck).
+    recordAction('ai', { type: 'pass' });
     await delay(500);
     passTurn('ai');
     render();
@@ -6876,6 +7159,7 @@ async function aiTakeTurn() {
     const weakest = ok.length ? ok.slice().sort((a, b) => a.power - b.power)[0] : aiLeastBadCard(ai.hand);
     decision = { action: 'play', uid: weakest.uid };
   }
+  recordAction('ai', decision.action === 'pass' ? { type: 'pass' } : { type: 'play', uid: decision.uid, index: null });
   if (decision.action === 'pass') {
     await delay(500); // a beat before committing to the pass
     passTurn('ai');
@@ -7029,6 +7313,7 @@ async function aiTakeTurn() {
     state.aiComboPlan = null;
     // draw only happens once the turn is actually ending
     setTimeout(() => {
+      recordAction('ai', { type: 'endTurn' });
       flyDraw('ai', () => {
         endOfTurnDraw('ai');
         render();
@@ -7374,7 +7659,7 @@ function startDeckTopDamage(side, card, notifyInfo, onDone) {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
       resolve();
     };
     const who = side === 'player' ? 'Your' : "Opponent's";
@@ -7394,11 +7679,11 @@ function startDeckTopDamage(side, card, notifyInfo, onDone) {
       setTimeout(() => { hide(); finish(); }, 1100);
       return;
     }
-    if (side === 'player') {
+    if (isInteractive(side)) {
       // normal click-to-target flow (same rules/cancel behavior as any
       // Play damage). The reveal is hidden as soon as this targeting
       // session ends, however it ends (resolved or cancelled).
-      const session = { side: 'player', card: liveCard, kind: 'playDamage', amount, notifyInfo, onDone: () => { if (onDone) onDone(); resolve(); } };
+      const session = { side, card: liveCard, kind: 'playDamage', amount, notifyInfo, onDone: () => { if (onDone) onDone(); resolve(); } };
       startTargeting(session);
       const watch = () => { if (activeTargeting === session) requestAnimationFrame(watch); else hide(); };
       requestAnimationFrame(watch);
@@ -7425,13 +7710,13 @@ function startPlayDamageMulti(side, card, notifyInfo, onDone) {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
       resolve();
     };
     const others = [...state.players.player.board, ...state.players.ai.board].filter(c => c.uid !== liveCard.uid && c.power > 0 && !c.floatingSpecial);
     if (others.length === 0) { finish(); return; }
-    if (side === 'player') {
-      startTargeting({ side: 'player', card: liveCard, kind: 'playBuffMulti', max: card.playDamageMulti, selected: [], excludeSelf: true,
+    if (isInteractive(side)) {
+      startTargeting({ side, card: liveCard, kind: 'playBuffMulti', max: card.playDamageMulti, selected: [], excludeSelf: true,
                        filter: c => c.power > 0, damageAmount: amt, notifyInfo, onDone: () => { if (onDone) onDone(); resolve(); } });
     } else {
       const picks = aiPickMultiDamageTargets(card.playDamageMulti, amt);
@@ -7466,8 +7751,8 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
     resolveDethmoldDiscard(side, card, finish);
   } else if (card.playTargetDamage) {
     const amount = effectivePlayDamage(side, card);
-    if (side === 'player') {
-      startTargeting({ side: 'player', card, kind: 'playDamage', amount, notifyInfo, onDone });
+    if (isInteractive(side)) {
+      startTargeting({ side, card, kind: 'playDamage', amount, notifyInfo, onDone });
     } else {
       const enemyBoard = state.players.player.board;
       if (enemyBoard.length === 0) { finish(); return; }
@@ -7476,8 +7761,8 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
       applyPlayDamage('ai', liveCard, amount, target, () => finish());
     }
   } else if (card.playTargetRemoveBuffs) {
-    if (side === 'player') {
-      startTargeting({ side: 'player', card, kind: 'playDebuff', notifyInfo, onDone });
+    if (isInteractive(side)) {
+      startTargeting({ side, card, kind: 'playDebuff', notifyInfo, onDone });
     } else {
       const target = pickDebuffTarget('ai');
       if (!target) { finish(); return; } // nothing worth removing -- skip using the ability
@@ -7489,12 +7774,12 @@ function triggerPlayTargetDamageIfAny(side, card, notifyInfo, onDone) {
   } else if (card.playDamageSeq) {
     startSequentialDamagePicks(side, card, card.playDamageSeq, card.playDamageSeqAmount || 1, notifyInfo, onDone);
   } else if (card.playBuffMulti) {
-    if (side === 'player') {
+    if (isInteractive(side)) {
       const validCount = [...state.players.player.board, ...state.players.ai.board]
         .filter(c => c.uid !== card.uid).length;
       if (validCount === 0) { finish(); return; }
-      startTargeting({ side: 'player', card, kind: 'playBuffMulti', max: card.playBuffMulti,
-                        selected: [], excludeSelf: true, effect: t => applyPowerDelta(t, 1, { side: 'player', card }),
+      startTargeting({ side, card, kind: 'playBuffMulti', max: card.playBuffMulti,
+                        selected: [], excludeSelf: true, effect: t => applyPowerDelta(t, 1, { side, card }),
                         notifyInfo, onDone });
     } else {
       const liveCard = state.players.ai.board.find(c => c.uid === card.uid) || card;
@@ -7974,20 +8259,39 @@ function openDiscardModal(side) {
 // `predicate(card)`. Resolves with the chosen card, or null if the player
 // skips / has nothing eligible.
 function chooseCardFromDiscard(side, predicate, hint) {
-  return new Promise(resolve => {
-    const eligible = state.players[side].graveyard.filter(predicate);
-    if (eligible.length === 0) {
-      resolve(null);
-      return;
-    }
+  const eligible = state.players[side].graveyard.filter(predicate);
+  return requestPick(side, 'discard', side, eligible, hint || 'Pick an eligible card from the discard pile, or skip.', () => {
     openDiscardSide = side;
-    discardChooser = { predicate, selectedUid: null, resolve };
+    discardChooser = { predicate, selectedUid: null, resolve: (c) => submitAction(side, { type: 'pick', uid: c ? c.uid : null }) };
     discardModalTitle.textContent = 'Choose a Card to Play Free';
     discardModalHint.textContent = hint || 'Pick an eligible card from the discard pile, or skip.';
     discardModal.classList.add('choose');
     refreshDiscardModal();
     discardModal.classList.add('show');
   });
+}
+
+/* ---- Pick requests (discard / deck pickers) as controller decisions.
+   The engine waits on pendingPick; the answer is a serializable
+   { type: 'pick', uid } action (uid null = skip). For the local seat the
+   modal UI turns clicks into that action; any other interactive controller
+   (remote player, test bot) answers the request it was sent. ---- */
+let pendingPick = null; // { side, zone: 'discard'|'deck', pile, uids, resolve }
+function requestPick(chooser, zone, pile, eligible, hint, openUi) {
+  return new Promise(resolve => {
+    if (eligible.length === 0) { resolve(null); return; }
+    pendingPick = { side: chooser, zone, pile, uids: eligible.map(c => c.uid), resolve };
+    if (isLocalSide(chooser)) openUi();
+    notifyRequest(chooser, { type: 'pick', zone, pile, candidates: pendingPick.uids.slice(), hint: hint || '' });
+  });
+}
+function resolvePendingPick(uid) {
+  const pp = pendingPick;
+  if (!pp) return;
+  pendingPick = null;
+  const zoneCards = pp.zone === 'deck' ? state.players[pp.pile].deck : state.players[pp.pile].graveyard;
+  const card = uid ? zoneCards.find(c => c.uid === uid) || null : null;
+  pp.resolve(card);
 }
 
 function refreshDiscardModal() {
@@ -8081,14 +8385,10 @@ const deckPickModalSelect = document.getElementById('deckPickModalSelect');
 
 function chooseCardFromDeck(side, hint, title, opts) {
   opts = opts || {};
-  return new Promise(resolve => {
-    const deck = state.players[side].deck;
-    if (deck.length === 0) {
-      resolve(null);
-      return;
-    }
+  const chooser = opts.chooser || side;
+  return requestPick(chooser, 'deck', side, state.players[side].deck.slice(), hint || 'Pick a card from your deck to put on top.', () => {
     openDeckPickSide = side;
-    deckPickChooser = { selectedUid: null, resolve };
+    deckPickChooser = { selectedUid: null, resolve: (c) => submitAction(chooser, { type: 'pick', uid: c ? c.uid : null }) };
     deckPickModalTitle.textContent = title || 'Choose a Card to Put on Top';
     deckPickModalTitle.classList.toggle('red', !!opts.titleRed);
     deckPickModalHint.textContent = hint || 'Pick a card from your deck to put on top.';
@@ -8259,13 +8559,19 @@ function setPickBanner(text) {
 function startTargeting(session) {
   if (activeTargeting) return;
   activeTargeting = session;
-  setPickBanner(session.banner || '');
   hoverTargetUid = null;
-  render();
-  positionLineAtSource(session.card);
-  document.addEventListener('mousemove', onTargetingMouseMove);
-  document.addEventListener('keydown', onTargetingKeydown);
-  document.addEventListener('click', onTargetingDocumentClick);
+  if (isLocalSide(session.side)) {
+    setPickBanner(session.banner || '');
+    render();
+    positionLineAtSource(session.card);
+    document.addEventListener('mousemove', onTargetingMouseMove);
+    document.addEventListener('keydown', onTargetingKeydown);
+    document.addEventListener('click', onTargetingDocumentClick);
+  } else {
+    render();
+  }
+  // every targeting session is a decision request to that side's controller
+  notifyRequest(session.side, describeTargetingRequest(session));
 }
 
 function positionLineAtSource(card) {
@@ -8308,18 +8614,14 @@ const cancelTargetDialog = document.getElementById('cancelTargetDialog');
 // Order is simply still available). Play-triggered abilities have already
 // committed their card to the board, so backing out means the ability
 // fizzles for good; that needs an explicit "are you sure?" first.
+// UI side of backing out (local seat only): decides whether to ask "are
+// you sure?" first, then submits a serializable 'cancel' action.
 function requestCancelTargeting() {
   const session = activeTargeting;
-  if (!session) return;
-  if (session.kind === 'pickMulti') {
-    if (!session.mandatory) finishPickMulti(); // clicking away = Done with the current selection
-    return;
-  }
-  if (session.kind === 'pickOwn') {
+  if (!session || !isLocalSide(session.side)) return;
+  if (session.kind === 'pickMulti' || session.kind === 'pickOwn') {
     if (session.mandatory) return; // no backing out of a mandatory pick
-    cancelTargeting();
-    render();
-    if (session.onCancel) session.onCancel();
+    submitAction(session.side, { type: 'cancel' }); // pickMulti: clicking away = Done with the current selection
     return;
   }
   // During the tutorial, targeting can only be resolved by actually
@@ -8329,9 +8631,7 @@ function requestCancelTargeting() {
   if (session.kind === 'order' || (session.kind === 'orderMulti' && session.selected.length === 0) ||
       (session.kind === 'playDamageSeq' && session.orderMode && session.getPicked() === 0)) {
     // (a multi-target Order with nothing picked yet is simply backed out of)
-    cancelTargeting();
-    render();
-    resumeAfterCancelledTargeting(session);
+    submitAction(session.side, { type: 'cancel' });
     return;
   }
   targetingCancelConfirmOpen = true;
@@ -8343,7 +8643,23 @@ function resolveCancelTargetDialog(confirmed) {
   targetingCancelConfirmOpen = false;
   cancelTargetDialog.classList.remove('show');
   if (!confirmed || !session) return;
-  if (session.kind === 'playBuffMulti' || session.kind === 'orderMulti') {
+  submitAction(session.side, { type: 'cancel' });
+}
+
+// Engine side of a 'cancel' answer: what "stop picking" means per session kind.
+function applyTargetingCancel(session) {
+  if (session.kind === 'pickMulti') {
+    if (!session.mandatory) finishPickMulti();
+    return;
+  }
+  if (session.kind === 'pickOwn') {
+    if (session.mandatory) return;
+    cancelTargeting();
+    render();
+    if (session.onCancel) session.onCancel();
+    return;
+  }
+  if (session.kind === 'playBuffMulti' || (session.kind === 'orderMulti' && session.selected.length > 0)) {
     // finishing early still applies the effect to whatever's already
     // selected (possibly nothing) -- it isn't a full cancel
     const targets = session.selected.slice();
@@ -8373,8 +8689,8 @@ function resumeAfterCancelledTargeting(session) {
   // A cancelled special-card effect (e.g. Alzur's Thunder) still needs to
   // finish its own fly-to-discard-pile sequence -- its outer caller handles
   // ending the turn once that's done, so skip the generic auto-end here.
-  if (session.side === 'player' && session.kind !== 'order' && session.kind !== 'orderMulti' && session.kind !== 'specialDamage') {
-    maybeAutoEndTurn('player');
+  if (isInteractive(session.side) && session.kind !== 'order' && session.kind !== 'orderMulti' && session.kind !== 'specialDamage') {
+    maybeAutoEndTurn(session.side);
   }
 }
 
@@ -8481,7 +8797,7 @@ function applyOrderAbility(side, card, ability, target, onDone) {
     if (ability.isScorch) logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order.`);
     else logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order on ${target.name}${itself}.`);
     if (onDone) onDone();
-    if (side === 'player') maybeAutoEndTurn('player');
+    afterInteractiveStep(side);
   };
   if (ability.isDamage && target.uid !== card.uid) {
     shootProjectile(card.uid, target.uid, () => {
@@ -8568,21 +8884,21 @@ function resolveTargeting(targetCard) {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
     });
   } else if (kind === 'playRefresh') {
     applyScoutRefresh(side, card, targetCard, () => {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
     });
   } else if (kind === 'playDebuff') {
     applyPlayRemoveBuffs(side, card, targetCard, () => {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
     });
   } else if (kind === 'playDamageSeq') {
     // one hit of Brokvar Archer's sequential damage
@@ -8594,7 +8910,7 @@ function resolveTargeting(targetCard) {
     const amt = amount || 1;
     const apply = () => {
       applyPowerDelta(targetCard, amt, { side, card });
-      logMsg(`Your ${card.name} gives ${targetCard.name}${targetCard.uid === card.uid ? ' (itself)' : ''} +${amt}.`);
+      logMsg(`${possessive(side)} ${card.name} gives ${targetCard.name}${targetCard.uid === card.uid ? ' (itself)' : ''} +${amt}.`);
       render();
       if (onPicked) onPicked();
     };
@@ -8604,7 +8920,7 @@ function resolveTargeting(targetCard) {
     // Dwarven Chariot's reaction
     shootProjectile(card.uid, targetCard.uid, () => {
       applyPowerDelta(targetCard, amount || 1, { side, card });
-      logMsg(`Your ${card.name} gives ${targetCard.name} +${amount || 1}.`);
+      logMsg(`${possessive(side)} ${card.name} gives ${targetCard.name} +${amount || 1}.`);
       render();
       if (onDone) onDone();
     }, 'buff');
@@ -8613,7 +8929,7 @@ function resolveTargeting(targetCard) {
       if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
     });
   } else if (kind === 'pickOwn') {
     if (activeTargetingSnapshot.onPick) activeTargetingSnapshot.onPick(targetCard);
@@ -8682,7 +8998,7 @@ function applyMultiTargetEffect(session, targetUids) {
       if (!isOrder && notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
       if (onDone) onDone();
-      if (side === 'player') maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
     });
     return;
   }
@@ -8703,7 +9019,7 @@ function applyMultiTargetEffect(session, targetUids) {
       beginBuffBatch();
       let i = 0;
       const next = () => {
-        if (i >= targets.length) { endBuffBatch(); orderDone(); if (side === 'player') maybeAutoEndTurn('player'); return; }
+        if (i >= targets.length) { endBuffBatch(); orderDone(); afterInteractiveStep(side); return; }
         const t = targets[i++];
         shootProjectile(card.uid, t.uid, () => { applyPowerDelta(t, 1, { side, card }); render(); next(); }, 'buff');
       };
@@ -8719,7 +9035,7 @@ function applyMultiTargetEffect(session, targetUids) {
     if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
     render();
     if (onDone) onDone();
-    if (side === 'player') maybeAutoEndTurn('player');
+    afterInteractiveStep(side);
   };
   if (targetUids.length === 0) { finishAll(); return; }
   let remaining = targetUids.length;
@@ -8784,16 +9100,16 @@ async function activateDiscardPlayOrder(side, card, ability) {
     logMsg(`${side === 'player' ? 'You have' : 'Opponent has'} no eligible ${ability.tier} cards in the discard pile to play.`);
     return;
   }
-  const chosen = await chooseCardFromDiscard('player', predicate, `Pick a ${ability.tier} card from the discard pile, or skip.`);
+  const chosen = await chooseCardFromDiscard(side, predicate, `Pick a ${ability.tier} card from the discard pile, or skip.`);
   if (!chosen) return;
-  playFreeCardWithAnimation('player', chosen.uid);
+  playFreeCardWithAnimation(side, chosen.uid);
   if (ability.reviveOrderUsableNow) allowReviveOrderNow(side, chosen.uid);
   card.orderUsed = true;
   state.players[side].orderUsedThisTurn = true;
   noteOrderUsed(side);
-  logMsg(`You activate ${card.name}'s Order.`);
+  logMsg(`${side === 'player' ? 'You activate' : 'Opponent activates'} ${card.name}'s Order.`);
   render();
-  if (side === 'player') maybeAutoEndTurn('player');
+  afterInteractiveStep(side);
 }
 
 // Wires up a rendered board card for its role during rendering: either the
@@ -8803,7 +9119,7 @@ async function activateDiscardPlayOrder(side, card, ability) {
 // while a target is being picked, the targetable/hover-snap behavior (any
 // card, either side).
 function wireOrderInteractions(el, side, card) {
-  if (activeTargeting) {
+  if (activeTargeting && isLocalSide(activeTargeting.side)) {
     if (activeTargeting.excludeSelf && card.uid === activeTargeting.card.uid) return;
     if (activeTargeting.filter && !activeTargeting.filter(card)) return;
     el.classList.add('targetable');
@@ -8822,7 +9138,7 @@ function wireOrderInteractions(el, side, card) {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       if (state.tutorial && !tutorialAllows(el)) return;
-      resolveTargeting(card);
+      submitAction(activeTargeting.side, { type: 'target', uid: card.uid });
     });
     return;
   }
@@ -8853,7 +9169,7 @@ function wireOrderInteractions(el, side, card) {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       if (state.tutorial && !tutorialAllows(el)) return;
-      activateOrderAbility('player', card);
+      submitAction('player', { type: 'order', uid: card.uid });
     });
   } else {
     btn.disabled = true;
@@ -9075,30 +9391,52 @@ function onDragEnd(e) {
   document.getElementById('oppSide').classList.remove('dragOver');
   drag = null;
 
-  if (overBoard && state.phase === 'playing' && state.activeTurn === 'player' &&
-      !state.players.player.passed && !state.players.player.actedThisTurn && !buffReactionsBusy()) {
-    SFX.place();
-    const playedCard = p_findCard(uid);
-    if (playedCard && playedCard.special) {
-      // Special cards (e.g. Scorch) never land on the battlefield -- they
-      // fly straight from the hand to an enlarged spot beside the player's
-      // row, sit there while their effect (and all its animations) plays
-      // out, then fly on to the discard pile. See playSpecialCardFloating.
-      const fromRect = originEl.getBoundingClientRect();
-      playSpecialCardFloating('player', uid, previewIndex, fromRect, () => {
-        maybeAutoEndTurn('player');
-      });
-      return;
-    }
-    const played = playCard('player', uid, previewIndex, { deferAllyNotify: true });
-    render();
-    resolvePendingPlayTokens('player', playedCard, () => continueAfterPlayerPlay(playedCard, played));
-  } else {
+  // the drop becomes a serializable 'play' action (see applyAction)
+  if (!(overBoard && submitAction('player', { type: 'play', uid, index: previewIndex === undefined ? null : previewIndex }))) {
     renderPlayerBoard(null);
   }
 }
 
-function continueAfterPlayerPlay(playedCard, played) {
+/* Executes a validated 'play' action for an interactive side (local human,
+   or -- in PvP -- the remote player / a test bot). The local seat's card is
+   dropped from its hand; the opponent seat's card flies in from the
+   opponent's hand row exactly like the AI's plays. */
+function performInteractivePlay(side, uid, index) {
+  const playedCard = state.players[side].hand.find(c => c.uid === uid);
+  if (!playedCard) return;
+  SFX.place();
+  let fromRect = null;
+  if (side === 'player') {
+    const handEl = document.querySelector(`#playerHand .card[data-uid="${uid}"]`);
+    fromRect = handEl ? handEl.getBoundingClientRect() : null;
+  } else {
+    const handEls = document.querySelectorAll('#oppHandRow .cardback');
+    const fromEl = handEls[handEls.length - 1] || handEls[0];
+    fromRect = fromEl ? fromEl.getBoundingClientRect() : null;
+  }
+  if (playedCard.special) {
+    // Special cards (e.g. Scorch) never land on the battlefield -- they
+    // fly straight from the hand to an enlarged spot beside the player's
+    // row, sit there while their effect (and all its animations) plays
+    // out, then fly on to the discard pile. See playSpecialCardFloating.
+    playSpecialCardFloating(side, uid, index === null ? undefined : index,
+      fromRect || { left: window.innerWidth / 2 - 22, top: window.innerHeight / 2 - 31, width: 44, height: 62 },
+      () => { afterInteractiveStep(side); });
+    return;
+  }
+  const played = playCard(side, uid, index === null ? undefined : index, { deferAllyNotify: true });
+  render();
+  const go = () => resolvePendingPlayTokens(side, playedCard, () => continueAfterPlay(side, playedCard, played));
+  if (side === 'player') { go(); return; }
+  const newEl = document.querySelector(`#oppSide .card[data-uid="${uid}"]`);
+  if (fromRect && newEl) {
+    const toRect = newEl.getBoundingClientRect();
+    newEl.style.visibility = 'hidden';
+    flyCard(playedCard, fromRect, toRect, () => { newEl.style.visibility = ''; render(); go(); });
+  } else go();
+}
+
+function continueAfterPlay(side, playedCard, played) {
   {
     // Allies (e.g. Tridam Infantry) are only notified once this card's own
     // play effect has fully resolved -- immediately for a plain card, but
@@ -9106,52 +9444,52 @@ function continueAfterPlayerPlay(playedCard, played) {
     // for one that has extra steps.
     const notifyInfo = played ? { card: playedCard, isFirstPlayThisTurn: played.isFirstPlayThisTurn } : null;
     if (playedCard && playedCard.playScript) {
-      runPlayScript('player', playedCard, notifyInfo);
+      runPlayScript(side, playedCard, notifyInfo);
     } else if (playedCard && playedCard.discardChoice) {
-      handleDiscardChoiceThenEndTurn('player', playedCard.discardChoice, notifyInfo);
+      handleDiscardChoiceThenEndTurn(side, playedCard.discardChoice, notifyInfo);
     } else if (playedCard && playedCard.deckTopChoice) {
-      handleDeckTopChoiceThenEndTurn('player', notifyInfo);
+      handleDeckTopChoiceThenEndTurn(side, notifyInfo);
     } else if (playedCard && playedCard.deckBottomChoice) {
-      handleDeckBottomChoiceThenEndTurn('player', notifyInfo);
+      handleDeckBottomChoiceThenEndTurn(side, notifyInfo);
     } else if (playedCard && playedCard.playDamageFromDeckTop) {
-      startDeckTopDamage('player', playedCard, notifyInfo);
+      startDeckTopDamage(side, playedCard, notifyInfo);
     } else if (playedCard && playedCard.playRefreshOrder) {
-      startScoutRefresh('player', playedCard, notifyInfo);
+      startScoutRefresh(side, playedCard, notifyInfo);
     } else if (playedCard && playedCard.playRefreshMulti) {
-      startMultiRefresh('player', playedCard, notifyInfo);
-    } else if (playedCard && dethmoldDiscardActive('player', playedCard)) {
-      resolveDethmoldDiscard('player', playedCard, () => {
-        if (notifyInfo) notifyAllyPlay('player', notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      startMultiRefresh(side, playedCard, notifyInfo);
+    } else if (playedCard && dethmoldDiscardActive(side, playedCard)) {
+      resolveDethmoldDiscard(side, playedCard, () => {
+        if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
         render();
-        maybeAutoEndTurn('player');
+        afterInteractiveStep(side);
       });
     } else if (playedCard && playedCard.playTargetDamage) {
-      startTargeting({ side: 'player', card: playedCard, kind: 'playDamage', amount: effectivePlayDamage('player', playedCard), notifyInfo });
+      startTargeting({ side, card: playedCard, kind: 'playDamage', amount: effectivePlayDamage(side, playedCard), notifyInfo });
     } else if (playedCard && playedCard.playTargetRemoveBuffs) {
-      startTargeting({ side: 'player', card: playedCard, kind: 'playDebuff', notifyInfo });
+      startTargeting({ side, card: playedCard, kind: 'playDebuff', notifyInfo });
     } else if (playedCard && playedCard.playDamageMulti) {
-      startPlayDamageMulti('player', playedCard, notifyInfo);
+      startPlayDamageMulti(side, playedCard, notifyInfo);
     } else if (playedCard && playedCard.playDamageSeq) {
-      startSequentialDamagePicks('player', playedCard, playedCard.playDamageSeq, playedCard.playDamageSeqAmount || 1, notifyInfo);
+      startSequentialDamagePicks(side, playedCard, playedCard.playDamageSeq, playedCard.playDamageSeqAmount || 1, notifyInfo);
     } else if (playedCard && playedCard.playBuffMulti) {
       const validCount = [...state.players.player.board, ...state.players.ai.board]
         .filter(c => c.uid !== playedCard.uid).length;
       if (validCount === 0) {
-        if (notifyInfo) notifyAllyPlay('player', notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+        if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
         render();
-        maybeAutoEndTurn('player');
+        afterInteractiveStep(side);
       } else {
-        startTargeting({ side: 'player', card: playedCard, kind: 'playBuffMulti', max: playedCard.playBuffMulti,
-                          selected: [], excludeSelf: true, effect: t => applyPowerDelta(t, 1, { side: 'player', card: playedCard }), notifyInfo });
+        startTargeting({ side, card: playedCard, kind: 'playBuffMulti', max: playedCard.playBuffMulti,
+                          selected: [], excludeSelf: true, effect: t => applyPowerDelta(t, 1, { side, card: playedCard }), notifyInfo });
       }
     } else if (playedCard && playedCard.playBuffRepeat) {
-      startSequentialBuffPicks('player', playedCard, playedCard.playBuffRepeat, notifyInfo);
+      startSequentialBuffPicks(side, playedCard, playedCard.playBuffRepeat, notifyInfo);
     } else if (playedCard && playedCard.playMoveOnePower) {
-      startMercenaryMove('player', playedCard, notifyInfo);
+      startMercenaryMove(side, playedCard, notifyInfo);
     } else {
-      if (notifyInfo) notifyAllyPlay('player', notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
+      if (notifyInfo) notifyAllyPlay(side, notifyInfo.card, notifyInfo.isFirstPlayThisTurn);
       render();
-      maybeAutoEndTurn('player');
+      afterInteractiveStep(side);
     }
   }
 }
@@ -9177,13 +9515,15 @@ function maybeAutoEndTurn(side) {
   // but it must not actually take effect until the tutorial ends (ending a
   // turn is always meant to be a deliberate, taught action there).
   if (state && state.tutorial && side === 'player') return;
-  if (side === 'player' && !autoEndTurnEnabled) return;
+  // interactive sides only auto-end when their controller opts in (the local
+  // human's Auto End Turn setting; a remote player's client decides itself)
+  if (isInteractive(side) && !(controllers[side].autoEndTurn && controllers[side].autoEndTurn())) return;
   setTimeout(() => {
     if (state.phase === 'playing' && state.activeTurn === side &&
         turnEndable(side) && !state.players[side].passed &&
         !activeTargeting && pendingPlayTokenSpawns === 0 && !hasAnyUsableOrder(side)) {
-      if (side === 'player') {
-        endPlayerTurnWithDraw();
+      if (isInteractive(side)) {
+        submitAction(side, { type: 'endTurn' });
       } else {
         endTurn(side);
       }
@@ -9290,9 +9630,7 @@ function cancelHold() {
 function completeHold() {
   cancelHold();
   if (!coinIsUsable() || state.players.player.actedThisTurn || state.players.player.orderUsedThisTurn) return;
-  passTurn('player');
-  render();
-  endTurn('player');
+  submitAction('player', { type: 'pass' });
 }
 
 /* If it's the player's turn to act, they haven't played anything yet
@@ -9324,9 +9662,7 @@ function maybeAutoPass() {
         coinBtn.classList.remove('holding');
         setProgress(0);
         autoPassing = false;
-        passTurn('player');
-        render();
-        endTurn('player');
+        submitAction('player', { type: 'pass' });
       } else {
         raf = requestAnimationFrame(step);
       }
@@ -9339,14 +9675,15 @@ let coinBusy = false;
 
 // Shared by manual "End turn" clicks and automatic turn-ending: draws (with
 // its flying-card animation, if a draw is actually due) then hands the turn over.
-function endPlayerTurnWithDraw() {
+function endPlayerTurnWithDraw() { endTurnWithDraw('player'); }
+function endTurnWithDraw(side) {
   if (coinBusy) return;
   coinBusy = true;
   coinBtn.classList.add('disabled');
-  flyDraw('player', () => {
-    endOfTurnDraw('player');
+  flyDraw(side, () => {
+    endOfTurnDraw(side);
     coinBusy = false;
-    endTurn('player');
+    endTurn(side);
   });
 }
 
@@ -9360,7 +9697,7 @@ function coinClick() {
   if (!coinIsUsable() || coinBusy || autoPassing) return;
   if (pendingPlayTokenSpawns > 0) return; // tokens still about to pop in
   if (turnEndable('player')) {
-    endPlayerTurnWithDraw();
+    submitAction('player', { type: 'endTurn' });
   } else if (state.players.player.orderUsedThisTurn) {
     // used an Order but hasn't played a card yet -- the turn can't be
     // ended (or passed) until they do
@@ -9429,35 +9766,48 @@ function showMulliganOverlay() {
 
     const swapBtn = document.getElementById('mullSwapBtn');
     if (swapBtn && !p.mulliganUsed) {
-      swapBtn.addEventListener('click', () => {
-        const oldHand = p.hand.splice(0, p.hand.length);
-        p.deck.push(...oldHand);
-        p.deck = shuffle(p.deck, rngPrivate('player'));
-        drawCards('player', 4);
-        p.mulliganUsed = true;
-        logMsg('You mulliganed your hand.');
-        draw();
-      });
+      swapBtn.addEventListener('click', () => submitAction('player', { type: 'mulligan' }));
     }
 
-    document.getElementById('mullContinue').addEventListener('click', () => {
-      overlay.style.display = 'none';
-      aiMulligan();
-      state.phase = 'playing';
-      state.activeTurn = state.turnPlayer;
-      state.players.player.actedThisTurn = false;
-      state.players.ai.actedThisTurn = false;
-      state.players.player.orderUsedThisTurn = false;
-      state.players.ai.orderUsedThisTurn = false;
-      state.players.player.ordersUsedThisTurn = 0;
-      state.players.ai.ordersUsedThisTurn = 0;
-      state.players.player.firstPlayDone = false;
-      state.players.ai.firstPlayDone = false;
-      render();
-      if (state.activeTurn === 'ai') setTimeout(aiTakeTurn, 900);
-    });
+    document.getElementById('mullContinue').addEventListener('click', () => submitAction('player', { type: 'mulliganDone' }));
   }
+  mulliganOverlayRedraw = draw;
   draw();
+  // interactive non-local seats (remote player / test bot) decide their own mulligan
+  ['player', 'ai'].forEach(sd => { if (isInteractive(sd) && !isLocalSide(sd)) notifyRequest(sd, { type: 'mulligan' }); });
+}
+let mulliganOverlayRedraw = null;
+function applyMulliganSwap(side) {
+  const p = state.players[side];
+  const oldHand = p.hand.splice(0, p.hand.length);
+  p.deck.push(...oldHand);
+  p.deck = shuffle(p.deck, rngPrivate(side));
+  drawCards(side, 4);
+  p.mulliganUsed = true;
+  logMsg(side === 'player' ? 'You mulliganed your hand.' : 'Opponent mulliganed their hand.');
+  if (side === 'player' && mulliganOverlayRedraw) mulliganOverlayRedraw();
+}
+// A side finished its mulligan. Once every interactive side is done, the
+// non-interactive ones (the AI) take theirs and play begins -- the same
+// order as before the controller split (AI mulligans on the player's Continue).
+function applyMulliganDone(side) {
+  state.mulliganReady = state.mulliganReady || { player: false, ai: false };
+  state.mulliganReady[side] = true;
+  if (side === 'player') document.getElementById('overlay').style.display = 'none';
+  if (!['player', 'ai'].every(sd => !isInteractive(sd) || state.mulliganReady[sd])) return;
+  ['player', 'ai'].forEach(sd => { if (!isInteractive(sd) && controllers[sd].mulligan) controllers[sd].mulligan(sd); });
+  state.phase = 'playing';
+  state.activeTurn = state.turnPlayer;
+  state.players.player.actedThisTurn = false;
+  state.players.ai.actedThisTurn = false;
+  state.players.player.orderUsedThisTurn = false;
+  state.players.ai.orderUsedThisTurn = false;
+  state.players.player.ordersUsedThisTurn = 0;
+  state.players.ai.ordersUsedThisTurn = 0;
+  state.players.player.firstPlayDone = false;
+  state.players.ai.firstPlayDone = false;
+  render();
+  scheduleTurnStart();
 }
 
 function aiMulligan() {

@@ -1648,12 +1648,12 @@
 
   /* ---- Deck builder (main menu "Build a deck"): the library modal covers only
      the left half, #deckScreen is the right half ---- */
-  #libraryModal.deckBuild { left: auto; width: 50%; }
+  #libraryModal.deckBuild { left: auto; width: 36%; }
   #libraryModal.deckBuild.dropRemove #libraryBox { outline: 3px dashed var(--bad); outline-offset: -6px; }
   #libraryModal.deckBuild #libraryGrid .card { cursor: grab; touch-action: none; user-select: none; }
   #libraryGrid .card.deckFull { filter: grayscale(1) brightness(.55); cursor: not-allowed !important; }
   .deckBadge { position: absolute; right: 4px; bottom: 3px; z-index: 3; font: 700 11px Arial, sans-serif; background: #000c; color: var(--text); padding: 1px 6px; border-radius: 6px; pointer-events: none; }
-  #deckScreen { display: none; position: fixed; top: 20px; bottom: 20px; left: 20px; right: calc(50% + 0px); z-index: 2100; background: var(--panel); border-radius: 14px; box-shadow: 0 16px 40px #000c; padding: 20px 24px; flex-direction: column; min-height: 0; }
+  #deckScreen { display: none; position: fixed; top: 20px; bottom: 20px; left: 20px; right: 36%; z-index: 2100; --slotW: clamp(60px, calc((64vw - 40px - 48px - 7 * 12px) / 8), 92px); background: var(--panel); border-radius: 14px; box-shadow: 0 16px 40px #000c; padding: 20px 24px; flex-direction: column; min-height: 0; }
   #deckScreen.show { display: flex; }
   #deckHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   #deckHeader h2 { margin: 0; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; }
@@ -1663,7 +1663,7 @@
   .deckHeading { margin: 6px 0 8px; font-family: 'GwentFont', serif; font-size: 13px; letter-spacing: 2px; color: var(--muted); text-transform: uppercase; }
   .deckRow { display: flex; gap: 12px; justify-content: center; margin-bottom: 12px; }
   .deckDivider { width: 160px; height: 1px; background: var(--border); margin: 6px 0 10px; flex: 0 0 auto; }
-  .deckSlot { position: relative; box-sizing: border-box; width: 92px; height: 130px; border-radius: 8px; border: 2px dashed var(--border); background: #00000038; flex: 0 0 auto; }
+  .deckSlot { position: relative; box-sizing: border-box; width: var(--slotW); height: calc(var(--slotW) * 130 / 92); border-radius: 8px; border: 2px dashed var(--border); background: #00000038; flex: 0 0 auto; }
   .deckSlot[data-tier="gold"] { border-color: var(--gold); }
   .deckSlot[data-tier="silver"] { border-color: var(--silver); }
   .deckSlot[data-tier="bronze"] { border-color: var(--bronze); }
@@ -9304,7 +9304,7 @@ function buildDeckScreen() {
     }
     if (!last) { const d = document.createElement('div'); d.className = 'deckDivider'; deckBody.appendChild(d); }
   };
-  addSection('gold', 'Golds', 1); addSection('silver', 'Silvers', 1); addSection('bronze', 'Bronzes', 2, true);
+  addSection('gold', 'Golds', 1); addSection('silver', 'Silvers', 1); addSection('bronze', 'Bronzes', 1, true);
   renderDeckSlots();
 }
 function renderDeckSlots() {
@@ -9352,7 +9352,7 @@ window.addEventListener('pointermove', (e) => {
   const slot = deckSlotAt(e.clientX, e.clientY);
   deckBody.querySelectorAll('.deckSlot.slotOver').forEach(s => s.classList.remove('slotOver'));
   if (slot && cardFitsSlot(d.card, slot.dataset.tier)) slot.classList.add('slotOver');
-  libraryModal.classList.toggle('dropRemove', !!d.from && !slot && e.clientX >= window.innerWidth / 2);
+  libraryModal.classList.toggle('dropRemove', !!d.from && !slot && e.clientX >= window.innerWidth * 0.64);
 });
 function endDeckDrag(e, cancel) {
   const d = deckDrag; if (!d) return;
@@ -9374,7 +9374,7 @@ function endDeckDrag(e, cancel) {
     } else {
       deckSlots[tier][idx] = d.card.id; ok = true;
     }
-  } else if (d.from && e.clientX >= window.innerWidth / 2) {
+  } else if (d.from && e.clientX >= window.innerWidth * 0.64) {
     deckSlots[d.from.tier][d.from.idx] = null; ok = true;
   }
   if (ok) { SFX.place(); deckChanged(); }

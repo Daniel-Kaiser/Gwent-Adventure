@@ -2447,8 +2447,9 @@ const CARD_DB = {
   // Play (may) AND Order: +1 to another card in play.
   mahakam_guard:     { id: 'mahakam_guard', name: 'Mahakam Guard', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/mahakam_guard.jpg', playBuffRepeat: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
-  // Order: +1 to another card. Its Order refreshes whenever it gets buffed.
-  mahakam_smith:     { id: 'mahakam_smith', name: 'Mahakam Smith', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/mahakam_smith.jpg', refreshOnBuffed: true,
+  // Passive: the first time each turn its owner buffs another card, that card
+  // gets an additional +1 (a separate buff). Order: +1 to another card.
+  mahakam_smith:     { id: 'mahakam_smith', name: 'Mahakam Smith', power: 2, tier: 'bronze', faction: 'mahakam', img: 'cards/mahakam_smith.jpg', smithFirstBuffExtra: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
   // Order: discard the highest card(s) in play (both boards, itself if tied).
   pyrotechnician:    { id: 'pyrotechnician', name: 'Pyrotechnician', power: 1, tier: 'bronze', faction: 'mahakam', img: 'cards/pyrotechnician.jpg',
@@ -2459,9 +2460,8 @@ const CARD_DB = {
                        abilities: [ { trigger: 'order', needsTarget: true, multiBuff: 3,
                                       validTargets: (side, card) => allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial),
                                       effect: (ctx, target) => applyPowerDelta(target, 1, { side: ctx.side, card: ctx.card }) } ] },
-  // Order: deal 1. Its Order refreshes whenever it gets buffed.
-  dwarf_berserker:   { id: 'dwarf_berserker', name: 'Dwarf Berserker', power: 3, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarf_berserker.jpg', refreshOnBuffed: true,
-                       abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+  // Passive: whenever its owner buffs it, deal 1 damage (max 3 times per turn).
+  dwarf_berserker:   { id: 'dwarf_berserker', name: 'Dwarf Berserker', power: 4, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarf_berserker.jpg', berserkerOnBuff: 3, abilities: [] },
   // Passive: the first time each turn its owner's effects buff it, its owner
   // gives another card +1.
   dwarven_chariot:   { id: 'dwarven_chariot', name: 'Dwarven Chariot', power: 4, tier: 'bronze', faction: 'mahakam', img: 'cards/dwarven_chariot.jpg', chariotOnOwnerBuff: 1, abilities: [] },
@@ -4934,7 +4934,7 @@ function resolveDethmoldDiscard(side, card, onDone) {
    with a positive amount. Used by Percival Schuttenbach's refresh. */
 function cardHasBuffAbility(card) {
   if (!card) return false;
-  if (card.playBuffRepeat || card.playBuffMulti || card.buffOnSecondOrder || card.buffOnOwnerBuffOther || card.chariotOnOwnerBuff) return true;
+  if (card.playBuffRepeat || card.playBuffMulti || card.buffOnSecondOrder || card.buffOnOwnerBuffOther || card.chariotOnOwnerBuff || card.smithFirstBuffExtra) return true;
   return (card.abilities || []).some(a => {
     if (a.isBuff || a.multiBuff || a.seqBuff || a.doublesSelf) return true;
     if (a.isDamage || a.isRefresh || a.isScorch || a.isDiscardPlay || typeof a.effect !== 'function') return false;
@@ -5265,6 +5265,7 @@ function enqueueBuffReaction(r) {
   buffReactionTally.n++;
   buffReactionQueue.push(r);
 }
+let smithExtraDepth = 0;
 function onCardBuffed(card, amount, sourceSide, sourceCard) {
   if (!state || state.phase !== 'playing' || !(amount > 0)) return;
   const side = findCardOwnerSide(card.uid);
@@ -5288,6 +5289,15 @@ function onCardBuffed(card, amount, sourceSide, sourceCard) {
   if (card.chariotOnOwnerBuff && firstOwnerBuff) {
     enqueueBuffReaction({ type: 'chariot', uid: card.uid });
   }
+  // Dwarf Berserker: every owner-buff earns a 1-damage proc (max 3 per turn).
+  // Procs are queued reactions, so they wait for the buffing ability to end.
+  if (card.berserkerOnBuff && byOwner) {
+    if (card._berserkerTurn !== t) { card._berserkerTurn = t; card._berserkerProcs = 0; }
+    if (card._berserkerProcs < card.berserkerOnBuff) {
+      card._berserkerProcs++;
+      enqueueBuffReaction({ type: 'berserker', uid: card.uid });
+    }
+  }
   if (sp) {
     sp.board.forEach(d => {
       if (d.buffOnOwnerBuffOther && d.uid !== card.uid && d._defenderTurn !== t) {
@@ -5295,6 +5305,21 @@ function onCardBuffed(card, amount, sourceSide, sourceCard) {
         enqueueBuffReaction({ type: 'defender', uid: d.uid });
       }
     });
+    // Mahakam Smith: the first time each turn its owner buffs another card,
+    // that card gets an extra +1 right away -- its own buff instance (it can
+    // set off other buff reactions), but it never re-triggers a Smith.
+    if (!smithExtraDepth && !card.floatingSpecial) {
+      const smiths = sp.board.filter(d => d.smithFirstBuffExtra && d.uid !== card.uid && d._smithTurn !== t);
+      smiths.forEach(d => { d._smithTurn = t; });
+      smiths.forEach(d => {
+        if (!findCardOwnerSide(card.uid)) return;
+        smithExtraDepth++;
+        try {
+          applyPowerDelta(card, d.smithFirstBuffExtra, { side: sourceSide, card: d });
+          logMsg(`${sourceSide === 'player' ? 'Your' : "Opponent's"} ${d.name} gives ${card.name} an additional +${d.smithFirstBuffExtra}.`);
+        } finally { smithExtraDepth--; }
+      });
+    }
   }
   scheduleBuffReactions();
 }
@@ -5400,6 +5425,27 @@ function runBuffReaction(r) {
       resolve();
       return;
     }
+    if (r.type === 'berserker') {
+      const targets = allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial && c.power > 0);
+      if (targets.length === 0) { resolve(); return; }
+      if (isInteractive(side)) {
+        logMsg(`${who} ${card.name} is buffed -- deal 1 damage.`);
+        startTargeting({ side, card, kind: 'reactionDamage', excludeSelf: true, amount: 1, filter: c => c.power > 0,
+                         banner: 'Dwarf Berserker: deal 1 damage', onDone: () => { render(); resolve(); } });
+      } else {
+        const enemy = state.players[otherSide(side)].board.filter(c => c.power > 0 && !c.floatingSpecial);
+        if (enemy.length === 0) { resolve(); return; }
+        const target = pickKillableOrBestDamageTarget(enemy, 1);
+        if (!target) { resolve(); return; }
+        shootProjectile(card.uid, target.uid, () => {
+          applyDamage(target, 1, { side, card });
+          logMsg(`${who} ${card.name} deals 1 damage to ${target.name}.`);
+          render();
+          afterKillsSettle(resolve, 0);
+        });
+      }
+      return;
+    }
     if (r.type === 'chariot') {
       const others = allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial);
       if (others.length === 0) { resolve(); return; }
@@ -5430,6 +5476,12 @@ function aiBuffTargetScore(c, source) {
   const t = state.turnCounter;
   if (c.refreshOnBuffed && c.orderUsed && c._ownerBuffedTurn !== t) s += 6;
   if (c.chariotOnOwnerBuff && c._ownerBuffedTurn !== t) s += 4;
+  // Dwarf Berserker: each owner-buff deals 1 damage (3 per turn) -- worth most when it kills
+  if (c.berserkerOnBuff && findCardOwnerSide(c.uid) === 'ai') {
+    const used = c._berserkerTurn === t ? (c._berserkerProcs || 0) : 0;
+    const enemy = state.players.player.board.filter(e => e.power > 0 && !e.floatingSpecial);
+    if (used < c.berserkerOnBuff && enemy.length) s += enemy.some(e => e.power <= 1 + aiBirnaBonus()) ? 5 : 2.5;
+  }
   // buffing a refresh-on-buff card whose Order is still unused would spend
   // its once-per-turn refresh for nothing
   if (c.refreshOnBuffed && !c.orderUsed && findOrderAbility(c) && c._ownerBuffedTurn !== t) s -= 3;
@@ -5945,7 +5997,11 @@ function onDamageDealt(card, amount, sourceSide, sourceCard) {
     if (card.power === 1 && p.board.some(c => c.birnaFollowup)) queueFollowup({ type: 'birna', side: sourceSide, uid: card.uid });
     if (card.power > 0 && p.graveyard.some(c => c.morkvargReturn)) queueFollowup({ type: 'morkvarg', side: sourceSide });
     let gained = false;
-    p.board.slice().forEach(c => {
+    // Bloodthirst only when the damaged card SURVIVED the hit (still in play
+    // with power > 0); a lethal hit gives nothing. (Other damage reactions
+    // above count every hit, lethal ones included.)
+    const survived = card.power > 0 && !!findCardOwnerSide(card.uid);
+    if (survived) p.board.slice().forEach(c => {
       const n = bloodthirstOf(c);
       if (n > 0 && c.power > 0 && !c.floatingSpecial) {
         applyPowerDelta(c, n, { side: sourceSide, card: c });
@@ -6075,8 +6131,10 @@ function aiPlayDamageValue(c) {
   if (!hits) return 0;
   const amt = c.playDamageMultiAmount || c.playDamageSeqAmount || 1;
   const enemy = state.players.player.board.filter(e => e.power > 0);
-  let v = Math.min(hits, enemy.filter(e => e.power <= amt).length) * 1.5;
-  if (aiBloodthirstGain() > 0) v += Math.min(hits, c.playDamageSeq ? hits : enemy.length) * aiBloodthirstGain();
+  const kills = Math.min(hits, enemy.filter(e => e.power <= amt).length);
+  let v = kills * 1.5;
+  // Bloodthirst only triggers on hits the target survives (not on kills)
+  if (aiBloodthirstGain() > 0) v += Math.max(0, Math.min(hits, c.playDamageSeq ? hits : enemy.length) - kills) * aiBloodthirstGain();
   return v;
 }
 
@@ -10087,6 +10145,14 @@ function resolveTargeting(targetCard) {
     };
     if (targetCard.uid === card.uid) { SFX.buff(); apply(); }
     else shootProjectile(card.uid, targetCard.uid, apply, 'buff');
+  } else if (kind === 'reactionDamage') {
+    // Dwarf Berserker's proc
+    shootProjectile(card.uid, targetCard.uid, () => {
+      applyDamage(targetCard, amount || 1, { side, card });
+      logMsg(`${possessive(side)} ${card.name} deals ${amount || 1} damage to ${targetCard.name}.`);
+      render();
+      afterKillsSettle(() => { if (onDone) onDone(); }, 0);
+    });
   } else if (kind === 'reactionBuff') {
     // Dwarven Chariot's reaction
     shootProjectile(card.uid, targetCard.uid, () => {

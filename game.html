@@ -2363,21 +2363,19 @@ const CARD_DB = {
   // Order: +1 to another card in play. Its Order refreshes the first time each turn its owner deals damage.
   heymaey_skald:     { id: 'heymaey_skald', name: 'Heymaey Skald', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/heymaey_skald.jpg', refreshOnFirstDamage: true,
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true, effect: (ctx, target) => applyPowerDelta(target, 1, ctx) } ] },
-  // Play: gain power equal to the damage its owner dealt this turn (max +3). Order: deal 1 damage.
+  // Play: gain power equal to the damage its owner dealt this turn (max +3). Order: deal 1 damage, twice (sequential picks).
   shieldmaiden:      { id: 'shieldmaiden', name: 'Shieldmaiden', power: 2, tier: 'bronze', faction: 'skellige', img: 'cards/shieldmaiden.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => resolveShieldmaiden(ctx.side, ctx.card) },
-                                    { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
+                                    { trigger: 'order', needsTarget: true, seqDamage: 2, amount: 1 } ] },
   // Play (may): deal 1 damage, twice (two sequential picks). Order: deal 1 damage.
   brokvar_archer:    { id: 'brokvar_archer', name: 'Brokvar Archer', power: 1, tier: 'bronze', faction: 'skellige', img: 'cards/brokvar_archer.jpg', playDamageSeq: 2, playDamageSeqAmount: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
   // Play (mandatory target) AND Order: deal 1 damage.
   dimun_pirate:      { id: 'dimun_pirate', name: 'Dimun Pirate', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/dimun_pirate.jpg', playTargetDamage: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
-  // Bloodthirst 1. Order: give another card in play power equal to this card's buffs (power above base, max +3).
-  an_craite_longship: { id: 'an_craite_longship', name: 'An Craite Longship', power: 2, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_longship.jpg', bloodthirst: 1,
-                       abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true,
-                                      validTargets: (side, card) => longshipBuffs(card) > 0 ? cardsInPlayExcept(card) : [],
-                                      effect: (ctx, target) => applyPowerDelta(target, longshipBuffs(ctx.card), ctx) } ] },
+  // Passive: after its owner plays their first card each turn, deal 1 damage
+  // to the last card the opponent played (see notePlayedCard / 'longship' follow-up).
+  an_craite_longship: { id: 'an_craite_longship', name: 'An Craite Longship', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_longship.jpg', longshipHit: 1, abilities: [] },
 
   /* ---- Skellige silvers ---- */
   vigi_the_loon:     { id: 'vigi_the_loon', name: 'Vigi the Loon', power: 5, tier: 'silver', faction: 'skellige', img: 'cards/vigi_the_loon.jpg', bloodthirst: 1, abilities: [] },
@@ -2395,21 +2393,21 @@ const CARD_DB = {
   // Play: after the opponent's next card this round is played, deal 4 damage to it (pending entry on its owner's side).
   holger_blackhand:  { id: 'holger_blackhand', name: 'Holger Blackhand', power: 4, tier: 'silver', faction: 'skellige', img: 'cards/holger_blackhand.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => addHolgerPending(ctx.side, ctx.card) } ] },
-  // Play (from hand only): deal 2 damage. Passive: whenever its owner deals nonlethal damage to a card, it is played from the discard pile.
-  morkvarg:          { id: 'morkvarg', name: 'Morkvarg', power: 2, tier: 'silver', faction: 'skellige', img: 'cards/morkvarg.jpg', playTargetDamage: 2, playDamageOnlyFromHand: true, morkvargReturn: true, abilities: [] },
+  // Passive: whenever its owner deals nonlethal damage to a card, it is played from the discard pile.
+  morkvarg:          { id: 'morkvarg', name: 'Morkvarg', power: 2, tier: 'silver', faction: 'skellige', img: 'cards/morkvarg.jpg', morkvargReturn: true, abilities: [] },
   // Bloodthirst 1. Order: play a Bronze card from your discard pile.
   sigrdrifa:         { id: 'sigrdrifa', name: 'Sigrdrifa', power: 2, tier: 'silver', faction: 'skellige', img: 'cards/sigrdrifa.jpg', bloodthirst: 1,
                        abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze', smartPick: true,
                                       filter: c => !c.special && c.power >= 1 } ] },
-  // Order: give another card in play power equal to the damage its owner dealt this turn.
-  svanrige:          { id: 'svanrige', name: 'Svanrige', power: 4, tier: 'silver', faction: 'skellige', img: 'cards/svanrige.jpg',
+  // Bloodthirst 1. Order: give another card in play power equal to the damage its owner dealt this turn.
+  svanrige:          { id: 'svanrige', name: 'Svanrige', power: 3, tier: 'silver', faction: 'skellige', img: 'cards/svanrige.jpg', bloodthirst: 1,
                        abilities: [ { trigger: 'order', needsTarget: true, excludeSelf: true, isBuff: true,
                                       validTargets: (side, card) => damageDealtThisTurn(side) > 0 ? cardsInPlayExcept(card) : [],
                                       effect: (ctx, target) => applyPowerDelta(target, damageDealtThisTurn(ctx.side), ctx) } ] },
-  // Play: +5 to itself. Passive: after its owner plays another card, deal 1 damage to it.
-  udalryk:           { id: 'udalryk', name: 'Udalryk', power: 1, tier: 'silver', faction: 'skellige', img: 'cards/udalryk.jpg',
-                       abilities: [ { trigger: 'onPlay', effect: (ctx) => resolveUdalrykPlay(ctx.side, ctx.card) },
-                                    { trigger: 'onAllyPlay', effect: (card, info) => { applyDamage(card, 1, { side: info.side, card }); } } ] },
+  // Play: +6 to itself. Passive: after its owner plays a card (any card, tokens
+  // and free plays included -- not itself), deal 1 damage to it ('udalryk' follow-up).
+  udalryk:           { id: 'udalryk', name: 'Udalryk', power: 1, tier: 'silver', faction: 'skellige', img: 'cards/udalryk.jpg', udalrykSelfHit: 1,
+                       abilities: [ { trigger: 'onPlay', effect: (ctx) => resolveUdalrykPlay(ctx.side, ctx.card) } ] },
   /* ---- Skellige golds ---- */
   // Play (may): deal 1 damage four times (sequential picks, like Brokvar Archer).
   hjalmar:           { id: 'hjalmar', name: 'Hjalmar', power: 3, tier: 'gold', faction: 'skellige', img: 'cards/hjalmar.jpg', playDamageSeq: 4, playDamageSeqAmount: 1, abilities: [] },
@@ -2419,8 +2417,8 @@ const CARD_DB = {
                                       filter: c => !c.special && c.power >= 1 } ] },
   // Bloodthirst 2.
   madman_lugos:      { id: 'madman_lugos', name: 'Madman Lugos', power: 4, tier: 'gold', faction: 'skellige', img: 'cards/madman_lugos.jpg', bloodthirst: 2, abilities: [] },
-  // Order: deal damage to another card equal to its current power minus 1 (leaves it at 1 power; cards with 1 or less power aren't valid targets).
-  cerys:             { id: 'cerys', name: 'Cerys', power: 6, tier: 'gold', faction: 'skellige', img: 'cards/cerys.jpg',
+  // Play AND Order: deal damage to another card equal to its current power minus 1 (leaves it at 1 power; cards with 1 or less power aren't valid targets).
+  cerys:             { id: 'cerys', name: 'Cerys', power: 4, tier: 'gold', faction: 'skellige', img: 'cards/cerys.jpg', playScript: cerysPlay,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, leavesOne: true, excludeSelf: true, amount: 0,
                                       validTargets: (side, card) => cardsInPlayExcept(card).filter(c => c.power > 1),
                                       effect: (ctx, target) => applyDamage(target, Math.max(0, target.power - 1)) } ] },
@@ -2611,11 +2609,9 @@ const CARD_DB = {
   king_henselt:      { id: 'king_henselt', name: 'King Henselt', power: 3, tier: 'gold', faction: 'northern_realms', img: 'cards/king_henselt.jpg',
                        abilities: [ { trigger: 'onPlay', effect: (ctx) => queuePlayTokens(ctx.card, 'soldier_token', 1) },
                                     { trigger: 'order', needsTarget: false, isScorch: true, effect: (ctx) => resolveHighestDiscardOrder(ctx.side, ctx.card) } ] },
-  // Order: same as Nenneke.
-  shani:             { id: 'shani', name: 'Shani', power: 5, tier: 'gold', faction: 'northern_realms', img: 'cards/shani.jpg',
-                       abilities: [ { trigger: 'order', needsTarget: false, isDiscardPlay: true, tier: 'bronze',
-                                      filter: c => isReviveEligibleBronze(c), reviveOrderUsableNow: true,
-                                      validTargets: (side) => state.players[side].graveyard.filter(c => c.tier === 'bronze' && isReviveEligibleBronze(c)) } ] },
+  // Play: play two Bronze cards with 1+ power from your discard pile (one pick
+  // after the other); their Orders can be used this very turn.
+  shani:             { id: 'shani', name: 'Shani', power: 1, tier: 'gold', faction: 'northern_realms', img: 'cards/shani.jpg', playScript: shaniPlay, abilities: [] },
 
   /* ---- Monsters of Velen (faction: 'monsters_of_velen') -- bronzes built around
      "discard from play" events (see onCardDiscardedFromPlay). A card is
@@ -5075,6 +5071,7 @@ function createTokensRightOf(side, sourceCard, tokenId, count) {
     board.splice(idx + 1 + i, 0, t);
     created.push(t);
     refreshOnOrderCardEntered(side, t);
+    notePlayedCard(side, t, true);
   }
   logMsg(`${side === 'player' ? 'You create' : 'Opponent creates'} ${count} ${CARD_DB[tokenId].name} token${count > 1 ? 's' : ''}.`);
   return created;
@@ -6016,11 +6013,6 @@ function onDamageDealt(card, amount, sourceSide, sourceCard) {
 function cardsInPlayExcept(card) {
   return allBoardCards().filter(c => c.uid !== card.uid && !c.floatingSpecial);
 }
-// An Craite Longship: its buffs = power above its base (net of damage), max +3.
-function longshipBuffs(card) {
-  const base = card.basePower !== undefined ? card.basePower : card.power;
-  return Math.min(3, Math.max(0, card.power - base));
-}
 function addHolgerPending(side, card) {
   const p = state.players[side];
   (p.holgerPending = p.holgerPending || []).push({ card });
@@ -6029,8 +6021,8 @@ function addHolgerPending(side, card) {
 // Udalryk's Play: +5 to itself (the +N shows once the card is drawn)
 function resolveUdalrykPlay(side, card) {
   const drawn = !!document.querySelector(`.card[data-uid="${card.uid}"]`);
-  applyPowerDelta(card, 5, { side, card });
-  if (!drawn) setTimeout(() => showFloatingDelta(card.uid, 5), 550);
+  applyPowerDelta(card, 6, { side, card });
+  if (!drawn) setTimeout(() => showFloatingDelta(card.uid, 6), 550);
   SFX.buff();
 }
 // Shieldmaiden's Play: +power equal to the damage its owner dealt this turn (max +3).
@@ -6458,6 +6450,7 @@ function playCard(side, uid, index, opts) {
   const isFirstPlayThisTurn = !p.firstPlayDone;
   p.firstPlayDone = true;
   card.playedTurn = state.turnCounter; // Order abilities need this to have been played on an earlier turn
+  notePlayedCard(side, card, false);
   card.orderUsed = false; // a fresh play (e.g. Ciri returning to hand and coming back down) resets its Order
   if (index === undefined || index === null || index > p.board.length) {
     p.board.push(card);
@@ -6596,7 +6589,38 @@ function flyExistingElement(el, toRect, durationMs, onDone) {
    here immediately after that card's own play effects/abilities have
    fully resolved, which is exactly when a passive like Roach's needs to
    check in. */
+/* ---- "You play a card" events (An Craite Longship, Udalryk) ----
+   A card counts as played when it enters play: from hand, free from the
+   discard pile, or as a created token. notePlayedCard runs the moment it
+   enters (it becomes that side's "last card played"); the reactions fire
+   once the play has resolved -- for hand/discard plays from notifyAllyPlay
+   (after the card's own Play abilities), for tokens right at creation --
+   and are queued follow-ups, so they always wait for the current ability.
+   Longship: the first card a side plays each turn (a token only counts as
+   that first card when no other card entered play before it this turn,
+   e.g. one created by an Order). ---- */
+function notePlayedCard(side, card, isToken) {
+  if (!state || !card || state.tutorial) return;
+  const p = state.players[side];
+  p.lastPlayedUid = card.uid;
+  if (p._firstPlayEvtTurn !== state.turnCounter) {
+    p._firstPlayEvtTurn = state.turnCounter;
+    card._longshipFirst = state.turnCounter;
+  }
+  if (isToken) cardPlayResolved(side, card);
+}
+function cardPlayResolved(side, card) {
+  if (!state || state.phase !== 'playing' || state.tutorial) return;
+  const p = state.players[side];
+  if (card._longshipFirst === state.turnCounter) {
+    delete card._longshipFirst;
+    const target = state.players[otherSide(side)].lastPlayedUid || null;
+    p.board.filter(c => c.longshipHit && !c.floatingSpecial).forEach(ls => queueFollowup({ type: 'longship', side, uid: ls.uid, target }));
+  }
+  p.board.filter(c => c.udalrykSelfHit && c.uid !== card.uid).forEach(u => queueFollowup({ type: 'udalryk', side, uid: u.uid }));
+}
 function notifyAllyPlay(side, playedCard, isFirstPlayThisTurn) {
+  cardPlayResolved(side, playedCard);
   resolveAfterOpponentPlay(side, playedCard);
   state.players[side].board.forEach(boardCard => {
     if (boardCard.uid === playedCard.uid || !boardCard.abilities) return;
@@ -6723,6 +6747,25 @@ async function runFollowup(f) {
       }));
       await killsSettled(150);
     }
+  } else if (f.type === 'udalryk') {
+    const u = findCardByUid(f.uid);
+    if (!u || !state || state.phase !== 'playing' || u.power <= 0 || findCardOwnerSide(u.uid) !== f.side) return;
+    applyDamage(u, 1, { side: f.side, card: u });
+    logMsg(`${f.side === 'player' ? 'Your' : "Opponent's"} ${u.name} takes 1 damage.`);
+    render();
+    await killsSettled(250);
+  } else if (f.type === 'longship') {
+    const ls = findCardByUid(f.uid);
+    const t = f.target && findCardByUid(f.target);
+    if (!ls || !state || state.phase !== 'playing' || !findCardOwnerSide(ls.uid)) return;
+    if (!t || t.power <= 0 || !findCardOwnerSide(t.uid)) { logMsg(`${f.side === 'player' ? 'Your' : "Opponent's"} ${ls.name} finds no target.`); return; }
+    await new Promise(res => shootProjectile(ls.uid, t.uid, () => {
+      applyDamage(t, 1, { side: f.side, card: ls });
+      logMsg(`${f.side === 'player' ? 'Your' : "Opponent's"} ${ls.name} deals 1 damage to ${t.name}.`);
+      render();
+      res();
+    }));
+    await killsSettled(150);
   } else if (f.type === 'larvae') {
     if (!state || state.phase !== 'playing') return;
     createTokensRightOf(f.side, { uid: f.uid }, 'larva_token', f.n);
@@ -6973,8 +7016,20 @@ function aiBestKillTarget(amt) {
   const killable = alive.filter(c => c.power <= amt + aiBirnaBonus());
   return killable.length ? pickDamageTarget(killable, (a, b) => a.power > b.power) : null;
 }
+// An Craite Longship(s) the AI has in play hit the player's last played card
+// after the AI's first card this turn: worth something when that hit kills.
+function aiLongshipFirstPlayValue() {
+  const ai = state.players.ai;
+  if (ai._firstPlayEvtTurn === state.turnCounter) return 0;
+  const t = state.players.player.lastPlayedUid && state.players.player.board.find(c => c.uid === state.players.player.lastPlayedUid);
+  if (!t || t.power <= 0) return 0;
+  return t.power <= 1 ? t.power + 1 : 0.5;
+}
 function aiScriptCardValue(c) {
   if (c.id === 'harpy' || c.id === 'monster_egg' || c.id === 'arachas_drone') return 1;
+  if (c.id === 'shani') return Math.min(2, state.players.ai.graveyard.filter(isReviveEligibleBronze).length) * 4;
+  if (c.id === 'cerys') return state.players.player.board.some(e => e.power > 1) && (state.players.ai.board.some(x => x.birnaFollowup) || aiHasDamageThisTurn(c)) ? 4 : 0;
+  if (c.id === 'an_craite_longship') return aiLongshipFirstPlayValue() + 1;
   if (c.id === 'archespore') return 2;
   if (c.id === 'cyclops') { const sac = aiBestSacrifice(c.uid), t = aiBestKillTarget(3); return sac && t ? Math.max(0, t.power - aiKeepValue(sac)) : 0; }
   if (c.id === 'dagon') return -aiDagonCost(c);
@@ -7388,6 +7443,53 @@ async function kayranPlay(side, card) {
   await scriptDamageHit(side, card, 5);
 }
 
+/* ---- Cerys (Play; her Order is the same): damage another card for its
+   power minus 1 (only cards with 2+ power qualify). The Play may be skipped. ---- */
+async function cerysPlay(side, card) {
+  const cands = cardsInPlayExcept(card).filter(c => c.power > 1);
+  if (cands.length === 0) return;
+  let t;
+  if (isInteractive(side)) {
+    t = await pickOwnCardInPlay(side, card, { cands, banner: 'Cerys: pick a card -- it is damaged down to 1 power (click away to skip)' });
+  } else {
+    const enemy = cands.filter(c => findCardOwnerSide(c.uid) === otherSide(side));
+    t = enemy.slice().sort((a, b) => b.power - a.power)[0] || null;
+    if (t) state.aiFocusUid = t.uid;
+  }
+  if (!t || !state || state.phase !== 'playing') return;
+  const live = state.players[side].board.find(c => c.uid === card.uid) || card;
+  await new Promise(res => shootProjectile(live.uid, t.uid, () => {
+    const amt = Math.max(0, t.power - 1);
+    applyDamage(t, amt, { side, card: live });
+    logMsg(`${side === 'player' ? 'Your' : "Opponent's"} ${live.name} deals ${amt} damage to ${t.name}.`);
+    render();
+    res();
+  }));
+  await killsSettled(200);
+}
+/* ---- Shani's Play: up to two Bronze cards with 1+ power from the discard
+   pile, picked one after the other (the player may skip either pick).
+   Each one's Order can be used this turn: allowReviveOrderNow lifts the
+   "not on the turn it was played" rule; the empty-hand rule never blocks
+   them, since Shani herself was played this turn. ---- */
+async function shaniPlay(side, card) {
+  const pred = c => isReviveEligibleBronze(c);
+  for (let i = 0; i < 2; i++) {
+    if (!state || state.phase !== 'playing') return;
+    const eligible = state.players[side].graveyard.filter(pred);
+    if (eligible.length === 0) { if (i === 0) logMsg(`${side === 'player' ? 'You have' : 'Opponent has'} no Bronze card with 1 or more power in the discard pile.`); return; }
+    let chosen;
+    if (isInteractive(side)) chosen = await chooseCardFromDiscard(side, pred, `Shani: pick a Bronze card to play from your discard pile (${i + 1} of 2), or skip.`);
+    else chosen = aiPickReviveTarget(side, eligible);
+    if (!chosen) return;
+    logMsg(`${side === 'player' ? 'Your' : "Opponent's"} Shani plays ${chosen.name} from the discard pile.`);
+    await playFreeCardWithAnimation(side, chosen.uid);
+    allowReviveOrderNow(side, chosen.uid);
+    render();
+    await delay(250);
+  }
+}
+
 /* "Passive: whenever you play a Gold card, this card gets played from your
    discard pile onto the board automatically" (Roach). Generic per-side --
    works the same for either player, and isn't single-use: a card brought
@@ -7423,6 +7525,7 @@ function playCardFromGraveyard(side, uid) {
   const isFirstPlayThisTurn = !p.firstPlayDone;
   p.firstPlayDone = true; // any card entering play, free or not, uses up the turn's "first card" slot
   card.playedTurn = state.turnCounter;
+  notePlayedCard(side, card, false);
   card.orderUsed = false; // a fresh play from the graveyard gets its Order back too
   p.board.push(card);
   triggerAbilities(card, 'onPlay', makeCtx(side, card));
@@ -9198,7 +9301,7 @@ function decideAiActionBase() {
   }
 
   // Siege Tower is worth 6 once 2+ Orders were used this turn, else 3.
-  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0) + aiPlayBuffValue(c) + aiPlayDamageValue(c) + aiScriptCardValue(c) + (c.id === 'holger_blackhand' ? 3 : 0) + (c.id === 'udalryk' ? 3 : 0);
+  const pv = c => c.power + (c.id === 'siege_tower' && ordersUsedThisTurn('ai') >= 2 ? 3 : 0) + aiPlayBuffValue(c) + aiPlayDamageValue(c) + aiScriptCardValue(c) + (c.id === 'holger_blackhand' ? 3 : 0) + (c.id === 'udalryk' ? 4 : 0);
   const sorted = [...hand].sort((a, b) => pv(a) - pv(b));
   const weakest = sorted[0];
   const strongest = sorted[sorted.length - 1];

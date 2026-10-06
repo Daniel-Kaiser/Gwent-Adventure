@@ -2391,7 +2391,10 @@ const CARD_DB = {
   an_craite_longship: { id: 'an_craite_longship', name: 'An Craite Longship', power: 3, tier: 'bronze', faction: 'skellige', img: 'cards/an_craite_longship.jpg', longshipHit: 1, abilities: [] },
 
   /* ---- Skellige silvers ---- */
-  vigi_the_loon:     { id: 'vigi_the_loon', name: 'Vigi the Loon', power: 5, tier: 'silver', faction: 'skellige', img: 'cards/vigi_the_loon.jpg', bloodthirst: 1, abilities: [] },
+  // Bloodthirst 1. Play (mandatory target, same as Dimun Pirate): deal 3 damage.
+  // Vigi is already on the board when its Play resolves, so a hit the target
+  // survives triggers Vigi's own Bloodthirst (+1); a kill doesn't.
+  vigi_the_loon:     { id: 'vigi_the_loon', name: 'Vigi the Loon', power: 2, tier: 'silver', faction: 'skellige', img: 'cards/vigi_the_loon.jpg', bloodthirst: 1, playTargetDamage: 3, abilities: [] },
   // Passive: after its owner deals damage to a card, if it has exactly 1 power left, deal 1 damage to it (queued follow-up).
   birna_bran:        { id: 'birna_bran', name: 'Birna Bran', power: 4, tier: 'silver', faction: 'skellige', img: 'cards/birna_bran.jpg', birnaFollowup: true, abilities: [] },
   // Order: deal 1 damage three times (sequential picks).
@@ -6422,6 +6425,15 @@ function aiHasDamageThisTurn(except) {
 // (kills, plus Bloodthirst gains per hit).
 function aiPlayDamageValue(c) {
   if (c.id === 'shieldmaiden') return Math.min(3, damageDealtThisTurn('ai'));
+  // Single-target Play damage on a Bloodthirst card (Vigi): when the hit
+  // can't kill anything, the target survives and every Bloodthirst card --
+  // the played card itself included -- gains.
+  if (c.playTargetDamage && c.bloodthirst) {
+    const enemy = state.players.player.board.filter(e => e.power > 0 && !e.floatingSpecial);
+    const amt = c.playTargetDamage + aiBirnaBonus();
+    if (enemy.length && !enemy.some(e => e.power <= amt)) return aiBloodthirstGain() + c.bloodthirst;
+    return 0;
+  }
   const hits = c.playDamageMulti || c.playDamageSeq || 0;
   if (!hits) return 0;
   const amt = c.playDamageMultiAmount || c.playDamageSeqAmount || 1;

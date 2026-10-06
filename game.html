@@ -2654,8 +2654,8 @@ const CARD_DB = {
   // Play & Order (may): discard one of your other cards in play; if you do, this card gets +2.
   ghoul:             { id: 'ghoul', name: 'Ghoul', power: 3, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/ghoul.jpg', playScript: ghoulPlay,
                        abilities: [ { trigger: 'order', needsTarget: false, orderScript: ghoulOrder, aiWants: aiWantsGhoul, validTargets: ownOtherCardsInPlay } ] },
-  // Play (may): deal 1 damage, then create a Larva token. Order: deal 1 damage.
-  harpy:             { id: 'harpy', name: 'Harpy', power: 1, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/harpy.jpg', playScript: harpyPlay, playScriptDamage: 1,
+  // Play (may): deal 2 damage, then create a Larva token. Order: deal 1 damage.
+  harpy:             { id: 'harpy', name: 'Harpy', power: 1, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/harpy.jpg', playScript: harpyPlay, playScriptDamage: 2,
                        abilities: [ { trigger: 'order', needsTarget: true, isDamage: true, amount: 1, effect: (ctx, target) => applyDamage(target, 1) } ] },
   // Play: create a Larva token. Passive: when YOU discard this card from play, play another Bronze card from your discard pile.
   monster_egg:       { id: 'monster_egg', name: 'Monster Egg', power: 2, tier: 'bronze', faction: 'monsters_of_velen', img: 'cards/monster_egg.jpg', discardSelfPlayBronze: true,
@@ -7379,7 +7379,7 @@ async function cyclopsPlay(side, card) {
 }
 function harpyPlay(side, card) {
   return (async () => {
-    await scriptDamageHit(side, card, 1);
+    await scriptDamageHit(side, card, 2);
     if (!state || state.phase !== 'playing') return;
     await delay(150);
     createTokensRightOf(side, card, 'larva_token', 1);

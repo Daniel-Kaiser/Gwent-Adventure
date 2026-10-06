@@ -1884,6 +1884,19 @@
     padding: 7px 14px; border-radius: 10px; background: #7a1c24f0; color: #fff; font-weight: 700; box-shadow: 0 4px 14px #0009; }
   #pvpNetBanner.show { display: flex; }
   .pvpDeckCheck { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  .pvpElapsed { color: var(--muted); font-size: 12px; text-align: center; margin: 0; }
+  .pvpFail { border: 1px solid var(--bad); border-radius: 8px; padding: 10px 12px; background: #7a1c2422; display: flex; flex-direction: column; gap: 8px; }
+  .pvpFail p { margin: 0; }
+  .pvpFail .gwDlgBtns { justify-content: flex-start; }
+  .pvpTestList { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+  .pvpTestList .ok { color: var(--good); font-weight: 700; }
+  .pvpTestList .bad { color: var(--bad); font-weight: 700; }
+  .pvpTestList .wait { color: var(--muted); }
+  .pvpSummary { font-weight: 700; }
+  .pvpSummary.good { color: var(--good); } .pvpSummary.bad { color: var(--bad); }
+  .pvpDevRow { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  #pvpRouteBadge { position: fixed; left: 10px; bottom: 8px; z-index: 1300; display: none; pointer-events: none; font: 11px/1.3 Consolas, monospace;
+    color: #f1e3c2; background: #000a; padding: 3px 8px; border-radius: 6px; }
   .pvpDeckCheck.bad { color: var(--bad); font-weight: 700; }
   #menuConcedeBtn { display: none; }
   body.pvpMode #menuConcedeBtn { display: block; }
@@ -3514,6 +3527,8 @@ window.__gwaDev = {
   pvpInfo() { return pvp ? { role: pvp.role, oppName: pvp.oppName, status: pvp.session && pvp.session.status, queued: pvp.actionQueue.length,
                              hashes: pvp.hashes, desync: pvp.desyncShown, deckCheck: pvp.oppDeckCheck, revealedOpp: pvp.revealedOpp.slice(), ended: pvp.ended } : null; },
   pvpCanonical() { return state && state.pvpSeats ? pvpCanonicalState() : null; },
+  pvpConnectTimeoutMs: null, // override the 20 s "couldn't connect" timeout in tests
+  pvpRtcConfig() { return pvpRtcConfig(); },
   snapshot() {
     if (!state) return null;
     return { log: state.log.slice(), actions: (state.actionLog || []).slice(), phase: state.phase, scores: { ...state.scores },
@@ -3542,15 +3557,44 @@ const PVP_PEERJS_URLS = [
   'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js',
   'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js',
 ];
-// STUN finds each player's public address. For players behind strict NATs
-// a TURN relay is needed -- add one here (free tiers exist), e.g.
-// { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' }
+// STUN finds each player's public address (enough for most home networks).
 const PVP_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
-const PVP_TURN_SERVERS = [];
+// TURN relay for networks that block direct connections (mobile networks,
+// strict routers/firewalls). Metered Open Relay account (free tier, 20 GB a
+// month) -- these credentials ship inside the game file on purpose; to
+// rotate them, create new credentials in the Metered dashboard and replace
+// username/credential below (see docs/multiplayer.md).
+const PVP_TURN_SERVERS = [
+  { urls: "stun:stun.relay.metered.ca:80" },
+  { urls: "turn:global.relay.metered.ca:80", username: "841305f153df58d0c6ce258b", credential: "eAL1AyuBbT4JseMf" },
+  { urls: "turn:global.relay.metered.ca:80?transport=tcp", username: "841305f153df58d0c6ce258b", credential: "eAL1AyuBbT4JseMf" },
+  { urls: "turn:global.relay.metered.ca:443", username: "841305f153df58d0c6ce258b", credential: "eAL1AyuBbT4JseMf" },
+  { urls: "turns:global.relay.metered.ca:443?transport=tcp", username: "841305f153df58d0c6ce258b", credential: "eAL1AyuBbT4JseMf" },
+];
 function pvpIceServers() { return PVP_ICE_SERVERS.concat(PVP_TURN_SERVERS); }
+// Developer mode "Force relay": only relay (TURN) routes, to check the relay
+// works even between two computers on the same network.
+const PVP_FORCE_RELAY_KEY = 'gwentAdventureForceRelay';
+function pvpForceRelayOn() {
+  if (!developerModeEnabled) return false;
+  try { return localStorage.getItem(PVP_FORCE_RELAY_KEY) === '1'; } catch (e) { return !!pvpForceRelayOn.mem; }
+}
+function pvpSetForceRelay(on) {
+  pvpForceRelayOn.mem = !!on;
+  try { localStorage.setItem(PVP_FORCE_RELAY_KEY, on ? '1' : '0'); } catch (e) {}
+}
+// The RTCPeerConnection configuration used by BOTH WebRTC transports.
+function pvpRtcConfig() {
+  const cfg = { iceServers: pvpIceServers() };
+  if (pvpForceRelayOn()) cfg.iceTransportPolicy = 'relay';
+  return cfg;
+}
+// How long two players who have found each other may take to open the data
+// channel before we tell them the network is blocking it.
+function pvpConnectTimeoutMs() { return (window.__gwaDev && __gwaDev.pvpConnectTimeoutMs) || 20000; }
 const PVP_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const PVP_HEARTBEAT_MS = 1500, PVP_SILENCE_MS = 6000, PVP_RECONNECT_WINDOW_MS = 30000;
 const PVP_NAME_KEY = 'gwentAdventurePlayerName';
@@ -3699,8 +3743,8 @@ async function pvpDecodeSdp(code, kind) {
   return { type: o.t, sdp: o.s };
 }
 function makeManualTransport() {
-  const pc = new RTCPeerConnection({ iceServers: pvpIceServers() });
-  const t = { kind: 'manual', onmessage: null, onstatus: null, dc: null, pc, dropUntil: 0, opened: false };
+  const pc = new RTCPeerConnection(pvpRtcConfig());
+  const t = { kind: 'manual', onmessage: null, onstatus: null, onprogress: null, dc: null, pc, dropUntil: 0, opened: false };
   const attach = (dc) => {
     t.dc = dc;
     dc.onopen = () => { if (!t.opened) { t.opened = true; t.onstatus && t.onstatus('open'); } else t.onstatus && t.onstatus('up'); };
@@ -3710,6 +3754,9 @@ function makeManualTransport() {
   pc.ondatachannel = (e) => attach(e.channel);
   pc.oniceconnectionstatechange = () => {
     const st = pc.iceConnectionState;
+    console.info('[PvP] ICE state:', st);
+    if (st === 'checking') t.onprogress && t.onprogress('checking');
+    if (st === 'failed' && !t.opened) t.onprogress && t.onprogress('failed');
     if (st === 'disconnected' || st === 'failed') t.onstatus && t.onstatus('down');
     else if ((st === 'connected' || st === 'completed') && t.opened) t.onstatus && t.onstatus('up');
   };
@@ -3728,6 +3775,7 @@ function makeManualTransport() {
     return pvpEncodeSdp(pc.localDescription, 'A');
   };
   t.acceptAnswer = async (code) => { await pc.setRemoteDescription(await pvpDecodeSdp(code, 'A')); };
+  t.rtc = () => pc;
   t.simulateDrop = (ms) => { t.dropUntil = Date.now() + ms; };
   return t;
 }
@@ -3749,8 +3797,9 @@ function pvpLoadPeerJs() {
   return pvpPeerJsPromise;
 }
 function makePeerTransport(isHost) {
-  const t = { kind: 'peer', onmessage: null, onstatus: null, conn: null, peer: null, closed: false, opened: false, dropUntil: 0, code: null, token: randomSeedString() };
-  const cfg = { config: { iceServers: pvpIceServers() }, debug: 0 };
+  const t = { kind: 'peer', onmessage: null, onstatus: null, onprogress: null, conn: null, peer: null, closed: false, opened: false, dropUntil: 0, code: null, token: randomSeedString() };
+  const cfg = { config: pvpRtcConfig(), debug: 0 };
+  t.rtc = () => (t.conn && t.conn.peerConnection) || null;
   let retryTimer = null;
   const attach = (conn) => {
     if (t.conn && t.conn !== conn) { try { t.conn.close(); } catch (e) {} }
@@ -3762,6 +3811,17 @@ function makePeerTransport(isHost) {
     conn.on('data', (d) => { if (t.conn !== conn || Date.now() < t.dropUntil) return; t.onmessage && t.onmessage(typeof d === 'string' ? d : JSON.stringify(d)); });
     conn.on('close', () => { if (t.conn === conn && !t.closed) t.onstatus && t.onstatus('down'); });
     conn.on('error', () => {});
+    // the RTCPeerConnection appears once negotiation starts: log ICE states, report a failure
+    let tries = 0;
+    const hook = () => {
+      const pc = conn.peerConnection;
+      if (!pc) { if (tries++ < 50 && t.conn === conn && !t.closed) setTimeout(hook, 200); return; }
+      pc.addEventListener('iceconnectionstatechange', () => {
+        console.info('[PvP] ICE state:', pc.iceConnectionState);
+        if (pc.iceConnectionState === 'failed' && !t.opened && t.conn === conn) t.onprogress && t.onprogress('failed');
+      });
+    };
+    hook();
   };
   t.send = (str) => { if (t.conn && t.conn.open && Date.now() >= t.dropUntil) { try { t.conn.send(str); } catch (e) {} } };
   t.close = () => { t.closed = true; clearInterval(retryTimer); try { t.conn && t.conn.close(); } catch (e) {} try { t.peer && t.peer.destroy(); } catch (e) {} };
@@ -3779,6 +3839,7 @@ function makePeerTransport(isHost) {
         if (t.guestToken && tok !== t.guestToken) { try { conn.close(); } catch (e) {} return; } // room already taken
         t.guestToken = tok;
         attach(conn);
+        if (!t.opened) t.onprogress && t.onprogress('guest-connecting');
       });
       peer.on('disconnected', () => { if (!t.closed) setTimeout(() => { try { peer.reconnect(); } catch (e) {} }, 1500); });
       peer.on('error', (err) => {
@@ -3788,6 +3849,8 @@ function makePeerTransport(isHost) {
     };
     tryCode();
   });
+  // host, after a failed attempt: drop the half-open connection, accept a new one
+  t.resetGuest = () => { const c = t.conn; t.conn = null; t.guestToken = null; if (c) { try { c.close(); } catch (e) {} } };
   // guest: connect to the host's room; resolves once the connection opens
   t.join = (code) => new Promise((resolve, reject) => {
     const peer = new Peer(undefined, cfg);
@@ -3795,7 +3858,16 @@ function makePeerTransport(isHost) {
     const hostId = PVP_PEER_PREFIX + code;
     let settled = false;
     const connect = () => attach(peer.connect(hostId, { reliable: true, serialization: 'json', metadata: { token: t.token } }));
-    peer.on('open', () => { connect(); });
+    // the broker answers within a moment if the room doesn't exist
+    // ('peer-unavailable'); no answer means the room is there and the two
+    // browsers are now trying to reach each other
+    const brokerTimer = setTimeout(() => { if (!settled) { settled = true; reject(new Error('Could not reach the matchmaking service. Check your internet connection, or use the manual connection codes.')); } }, 15000);
+    peer.on('open', () => {
+      clearTimeout(brokerTimer);
+      t.onprogress && t.onprogress('broker-ok');
+      connect();
+      setTimeout(() => { if (!settled && !t.closed) t.onprogress && t.onprogress('room-found'); }, 3000);
+    });
     peer.on('disconnected', () => { if (!t.closed) setTimeout(() => { try { peer.reconnect(); } catch (e) {} }, 1500); });
     peer.on('error', (err) => {
       if (settled) return;
@@ -3885,6 +3957,48 @@ function makePvpSession(transport, h) {
 let pvp = null;
 function pvpActive() { return !!(pvp && state && state.pvpSeats); }
 function pvpSend(m) { if (pvp && pvp.session && pvp.session.status !== 'closed') pvp.session.send(m); }
+/* Which route the data channel actually uses: 'direct' (host/srflx/prflx
+   candidates) or 'relay' (TURN), from the selected candidate pair. */
+async function pvpDetectRoute(transport) {
+  if (!transport) return null;
+  if (transport.kind === 'local') return 'local (same browser)';
+  const pc = transport.rtc && transport.rtc();
+  if (!pc || !pc.getStats) return null;
+  try {
+    const stats = await pc.getStats();
+    let pair = null;
+    stats.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId); });
+    if (!pair) stats.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && (r.selected || r.nominated) && !pair) pair = r; });
+    if (!pair) return null;
+    const loc = stats.get(pair.localCandidateId), rem = stats.get(pair.remoteCandidateId);
+    const relay = (loc && loc.candidateType === 'relay') || (rem && rem.candidateType === 'relay');
+    return relay ? 'relay' : 'direct';
+  } catch (e) { return null; }
+}
+function pvpNoteRoute() {
+  const pp = pvp;
+  if (!pp) return;
+  const probe = (tries) => pvpDetectRoute(pp.transport).then(r => {
+    if (pvp !== pp) return;
+    if (!r && tries > 0) { setTimeout(() => probe(tries - 1), 700); return; }
+    pp.route = r || 'unknown';
+    console.info('[PvP] connected, route:', pp.route);
+    pvpUpdateRouteBadge();
+    if (state && state.pvpSeats) logMsg(pvpRouteText(pp.route));
+  });
+  probe(5);
+}
+function pvpRouteText(r) {
+  return r === 'relay' ? 'Connected through the relay server.' : r === 'direct' ? 'Connected directly.' : r && r.startsWith('local') ? 'Connected (local test).' : 'Connected.';
+}
+function pvpUpdateRouteBadge() {
+  let el = document.getElementById('pvpRouteBadge');
+  const show = developerModeEnabled && pvp && pvp.route;
+  if (!show) { if (el) el.style.display = 'none'; return; }
+  if (!el) { el = document.createElement('div'); el.id = 'pvpRouteBadge'; document.body.appendChild(el); }
+  el.textContent = 'PvP route: ' + pvp.route + (pvpForceRelayOn() ? ' (force relay on)' : '');
+  el.style.display = 'block';
+}
 function pvpBegin(transport, role, extra) {
   pvpTeardown(false);
   pvp = { role, transport, name: pvpMyName(), oppName: 'Opponent', hello: null, my: null, opp: null,
@@ -3892,7 +4006,7 @@ function pvpBegin(transport, role, extra) {
           revealedOpp: [], ended: false, rematch: { me: false, them: false }, oppLeft: false, desyncShown: false,
           headSince: 0, gameNo: 0, ...(extra || {}) };
   pvp.session = makePvpSession(transport, {
-    onOpen: () => pvpSend({ t: 'hello', proto: PVP_PROTOCOL, build: pvpBuildHash(), name: pvp.name }),
+    onOpen: () => { pvpSend({ t: 'hello', proto: PVP_PROTOCOL, build: pvpBuildHash(), name: pvp.name }); pvpNoteRoute(); },
     onMessage: pvpOnMessage, onDown: pvpOnDown, onUp: pvpOnUp, onLost: pvpOnLost, onBye: () => pvpOpponentLeft(),
   });
   if (!pvp.pump) pvp.pump = setInterval(pvpPump, 50);
@@ -3911,6 +4025,7 @@ function pvpTeardown(sayBye) {
   window.removeEventListener('pagehide', pvpOnUnload);
   pvpSetNetBanner(null);
   pvpSetWaitBanner(null);
+  const rb = document.getElementById('pvpRouteBadge'); if (rb) rb.style.display = 'none';
   if (typeof __gwaDev !== 'undefined') __gwaDev.useDefaultControllers();
   document.body.classList.remove('pvpMode');
 }
@@ -4053,6 +4168,7 @@ function pvpStartGame(sharedSeed) {
   state = newPvpGameState(sharedSeed);
   drawCards('player', 4);
   drawCards('ai', 4);
+  if (pvp.route) logMsg(pvpRouteText(pvp.route));
   logMsg(`Match against ${escapeHtml(pvp.oppName)} started. ${state.startingPlayer === 'player' ? 'You go' : 'Opponent goes'} first and will win any power ties this game.`);
   render();
   showMulliganOverlay();
@@ -4387,20 +4503,28 @@ function openChallengeFriend() {
   const hostBtn = document.createElement('button'); hostBtn.type = 'button'; hostBtn.className = 'newGameOption'; hostBtn.id = 'pvpHostBtn'; hostBtn.textContent = 'Host a game';
   const joinBtn = document.createElement('button'); joinBtn.type = 'button'; joinBtn.className = 'newGameOption'; joinBtn.id = 'pvpJoinBtn'; joinBtn.textContent = 'Join a game';
   const links = document.createElement('div'); links.className = 'pvpLinks';
+  const test = document.createElement('a'); test.href = '#'; test.id = 'pvpTestLink'; test.textContent = 'Test my connection';
   const manual = document.createElement('a'); manual.href = '#'; manual.id = 'pvpManualLink'; manual.textContent = 'Advanced: connect with manual codes';
-  links.appendChild(manual);
+  links.append(test, manual);
   let localLink = null;
-  if (developerModeEnabled) {
-    localLink = document.createElement('a'); localLink.href = '#'; localLink.id = 'pvpLocalLink'; localLink.textContent = 'Local test (two tabs)';
-    links.appendChild(localLink);
-  }
   body.append(nameRow, intro, hostBtn, joinBtn, links);
+  if (developerModeEnabled) {
+    const dev = document.createElement('div'); dev.className = 'pvpLinks';
+    localLink = document.createElement('a'); localLink.href = '#'; localLink.id = 'pvpLocalLink'; localLink.textContent = 'Local test (two tabs)';
+    const fr = document.createElement('label'); fr.className = 'pvpDevRow';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'pvpForceRelay'; cb.checked = pvpForceRelayOn();
+    cb.addEventListener('change', () => pvpSetForceRelay(cb.checked));
+    fr.append(cb, document.createTextNode('Force relay (TURN only) – developer test'));
+    dev.append(localLink, fr);
+    body.appendChild(dev);
+  }
   const dlg = gwDialog({ title: 'Challenge a Friend', body, buttons: [] });
   dlg.box.classList.add('pvpDlg');
   const go = (fn) => (e) => { if (e) e.preventDefault(); pvpSaveName(nameInp.value); dlg.programmatic = true; dlg.close(); fn(); };
   hostBtn.addEventListener('click', go(() => openPvpHost('online')));
   joinBtn.addEventListener('click', go(() => openPvpJoin('online')));
   manual.addEventListener('click', go(() => openPvpManual()));
+  test.addEventListener('click', (e) => { e.preventDefault(); openPvpConnTest(); });
   if (localLink) localLink.addEventListener('click', go(() => openPvpLocalChooser()));
   [hostBtn, joinBtn].forEach(b => b.addEventListener('mouseenter', () => SFX.buttonHover()));
   setTimeout(() => nameInp.focus(), 0);
@@ -4417,9 +4541,58 @@ function openPvpLocalChooser() {
 // closed by the code itself once the connection is up).
 function pvpConnDialog(title, body, extraButtons) {
   const dlg = gwDialog({ title, body, buttons: (extraButtons || []).concat([{ label: 'Cancel', secondary: true, id: 'pvpCancelBtn' }]),
-    onClose: () => { if (!dlg.programmatic && pvp && !state) pvpTeardown(true); } });
+    onClose: () => { if (dlg.watch) dlg.watch.stop(); if (!dlg.programmatic && pvp && !state) pvpTeardown(true); } });
   dlg.box.classList.add('pvpDlg');
   return dlg;
+}
+function pvpFmtElapsed(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+const PVP_MSG_BLOCKED = 'You and your friend found each other, but the connection failed – a network (router, firewall or mobile network) is blocking it. Try again; if it keeps failing, both of you use "Test my connection" in the Challenge a Friend popup.';
+const PVP_MSG_TIMEOUT = 'You and your friend found each other, but the connection did not open within 20 seconds (most likely a network is blocking it). Try again; if it keeps failing, both of you use "Test my connection" in the Challenge a Friend popup.';
+/* Connection watchdog for a connection popup: shows the elapsed time while
+   waiting, and once both players have found each other (found()) gives the
+   data channel pvpConnectTimeoutMs to open before showing a clear failure
+   message with Retry / Cancel. Waiting for nobody is never a failure. */
+function pvpWatch(dlg, body, onRetry) {
+  const elapsed = document.createElement('p'); elapsed.className = 'pvpElapsed'; elapsed.id = 'pvpElapsed';
+  body.appendChild(elapsed);
+  const t0 = Date.now();
+  let foundTimer = null, failed = false, label = 'Waiting';
+  const tick = setInterval(() => {
+    if (!elapsed.isConnected) { clearInterval(tick); return; }
+    elapsed.textContent = failed ? '' : `${label}… ${pvpFmtElapsed(Date.now() - t0)}`;
+  }, 500);
+  elapsed.textContent = `${label}… 0:00`;
+  const w = {
+    setLabel(l) { label = l; },
+    found() {
+      if (foundTimer || failed) return;
+      label = 'Connecting to your friend';
+      foundTimer = setTimeout(() => { if (pvp && pvp.session && pvp.session.status === 'connecting') w.fail(PVP_MSG_TIMEOUT); }, pvpConnectTimeoutMs());
+    },
+    fail(text) {
+      if (failed || !dlg.el.isConnected) return;
+      failed = true; clearTimeout(foundTimer);
+      elapsed.textContent = '';
+      body.querySelectorAll('.pvpSpinnerWrap').forEach(e => e.remove());
+      const box = document.createElement('div'); box.className = 'pvpFail'; box.id = 'pvpFailBox';
+      const p = document.createElement('p'); p.textContent = text; box.appendChild(p);
+      const btns = document.createElement('div'); btns.className = 'gwDlgBtns';
+      const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'gwBtn'; retry.id = 'pvpRetryBtn'; retry.textContent = 'Retry';
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'gwBtn secondary'; cancel.id = 'pvpFailCancelBtn'; cancel.textContent = 'Back';
+      retry.addEventListener('click', () => { w.stop(); onRetry(); });
+      cancel.addEventListener('click', () => dlg.close());
+      btns.append(retry, cancel); box.appendChild(btns);
+      body.appendChild(box);
+    },
+    stop() { clearInterval(tick); clearTimeout(foundTimer); },
+  };
+  dlg.watch = w;
+  return w;
+}
+function pvpSpinner(body) {
+  const wrap = document.createElement('div'); wrap.className = 'pvpSpinnerWrap';
+  const spin = document.createElement('div'); spin.className = 'pvpSpinner';
+  wrap.appendChild(spin); body.appendChild(wrap);
 }
 async function openPvpHost(mode) {
   const body = document.createElement('div'); body.className = 'pvpBody';
@@ -4443,22 +4616,39 @@ async function openPvpHost(mode) {
     status.textContent = 'Your room code:';
     const cb = pvpCopyBox(code, false); cb.box.id = 'pvpRoomCode'; cb.box.classList.add('roomCode');
     body.appendChild(cb.wrap);
-    body.appendChild(pvpStatusLine(mode === 'local' ? 'Open the game in another tab, choose Local test → Join and enter this code.' :
-      'Send this code to your friend. Waiting for them to join…'));
-    const wrap = document.createElement('div'); wrap.className = 'pvpSpinnerWrap';
-    const spin = document.createElement('div'); spin.className = 'pvpSpinner';
-    wrap.appendChild(spin); body.appendChild(wrap);
+    const info = pvpStatusLine(mode === 'local' ? 'Open the game in another tab, choose Local test → Join and enter this code.' :
+      'Send this code to your friend. Waiting for them to join…');
+    body.appendChild(info);
+    pvpSpinner(body);
+    // waiting for nobody is fine (no time limit); once a friend starts
+    // connecting, the connection must open within the timeout
+    const arm = () => {
+      const watch = pvpWatch(dlg, body, () => {
+        body.querySelectorAll('#pvpFailBox, #pvpElapsed').forEach(e => e.remove());
+        if (transport.resetGuest) transport.resetGuest();
+        info.textContent = 'Ask your friend to join again with the same code. Waiting for them…';
+        pvpSpinner(body);
+        arm();
+      });
+      watch.setLabel('Waiting for your friend');
+      transport.onprogress = (st) => {
+        if (st === 'guest-connecting') { info.textContent = 'Your friend found the room – connecting…'; watch.found(); }
+        if (st === 'failed') watch.fail(PVP_MSG_BLOCKED);
+      };
+    };
+    arm();
   } catch (e) {
     status.textContent = e.message || String(e);
     status.classList.add('gwErr');
     pvpTeardown(false);
   }
 }
-function openPvpJoin(mode) {
+function openPvpJoin(mode, presetCode) {
   const body = document.createElement('div'); body.className = 'pvpBody';
   body.appendChild(pvpStatusLine('Enter the room code your friend sent you:'));
   const inp = document.createElement('input'); inp.type = 'text'; inp.id = 'pvpJoinCode'; inp.maxLength = 12; inp.className = 'pvpCodeBox roomCode';
   inp.autocomplete = 'off'; inp.spellcheck = false;
+  if (presetCode) inp.value = presetCode;
   body.appendChild(inp);
   const status = pvpStatusLine(''); body.appendChild(status);
   let busy = false;
@@ -4466,32 +4656,42 @@ function openPvpJoin(mode) {
   dlg.box.id = 'pvpJoinDialog';
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); });
   setTimeout(() => inp.focus(), 0);
+  const retry = () => { const c = inp.value; dlg.programmatic = true; dlg.close(); pvpTeardown(false); openPvpJoin(mode, c); setTimeout(() => { const b = document.getElementById('pvpJoinGo'); if (b) b.click(); }, 50); };
   async function doJoin() {
     if (busy) return;
     const code = pvpCleanCode(inp.value);
     if (code.length < 4) { status.textContent = 'Please enter the code.'; status.classList.add('gwErr'); return; }
     busy = true; status.classList.remove('gwErr');
-    status.textContent = 'Connecting…';
+    body.querySelectorAll('#pvpFailBox, #pvpElapsed').forEach(e => e.remove());
+    status.textContent = mode === 'local' ? 'Connecting…' : 'Connecting to the matchmaking service…';
+    const watch = pvpWatch(dlg, body, retry);
     try {
       if (mode === 'local') {
         const transport = makeLocalTransport(code, false);
         pvpBegin(transport, 'guest');
         setTimeout(() => {
           if (pvp && pvp.transport === transport && !pvp.hello && pvp.session.status === 'connecting') {
-            status.textContent = 'No local game found with that code (is the host tab still open?).'; status.classList.add('gwErr');
-            pvpTeardown(false); busy = false;
+            pvpTeardown(false); busy = false; status.textContent = '';
+            watch.fail('No local game found with that code (is the host tab still open?).');
           }
         }, 6000);
       } else {
         await pvpLoadPeerJs();
         const transport = makePeerTransport(false);
         pvpBegin(transport, 'guest');
+        transport.onprogress = (st) => {
+          if (st === 'broker-ok') status.textContent = 'Looking for the room…';
+          if (st === 'room-found') { status.textContent = 'Room found – connecting to your friend…'; watch.found(); }
+          if (st === 'failed') { status.textContent = ''; watch.fail(PVP_MSG_BLOCKED); }
+        };
         await transport.join(code);
       }
       status.textContent = 'Connected! Getting ready…';
     } catch (e) {
-      status.textContent = e.message || String(e); status.classList.add('gwErr');
+      status.textContent = '';
       pvpTeardown(false); busy = false;
+      // "never reached the room" (wrong code / host gone / service unreachable)
+      watch.fail((e.message || String(e)));
     }
   }
 }
@@ -4505,9 +4705,10 @@ function openPvpManual() {
 }
 async function openPvpManualHost() {
   const body = document.createElement('div'); body.className = 'pvpBody';
-  const s1 = pvpStatusLine('Creating your invite code…'); body.appendChild(s1);
+  const s1 = pvpStatusLine('Creating your invite code (this takes a few seconds)…'); body.appendChild(s1);
   const dlg = pvpConnDialog('Manual connection – host', body);
   dlg.box.id = 'pvpManualHostDialog';
+  const retry = () => { dlg.programmatic = true; dlg.close(); pvpTeardown(false); openPvpManualHost(); };
   try {
     const transport = makeManualTransport();
     pvpBegin(transport, 'host');
@@ -4522,8 +4723,13 @@ async function openPvpManualHost() {
     body.appendChild(btn);
     btn.addEventListener('click', async () => {
       st.classList.remove('gwErr');
-      try { await transport.acceptAnswer(ans.value); st.textContent = 'Connecting…'; btn.disabled = true; }
-      catch (e) { st.textContent = e.message || String(e); st.classList.add('gwErr'); }
+      try {
+        await transport.acceptAnswer(ans.value);
+        st.textContent = 'Connecting…'; btn.disabled = true;
+        const watch = pvpWatch(dlg, body, retry);
+        watch.found(); // both codes exchanged: the friend has been reached
+        transport.onprogress = (p) => { if (p === 'failed') watch.fail(PVP_MSG_BLOCKED + ' (Manual codes can only be used once – Retry makes new ones.)'); };
+      } catch (e) { st.textContent = e.message || String(e); st.classList.add('gwErr'); }
     });
   } catch (e) { s1.textContent = 'Could not create a connection: ' + (e.message || e); s1.classList.add('gwErr'); pvpTeardown(false); }
 }
@@ -4536,9 +4742,11 @@ function openPvpManualJoin() {
   body.appendChild(btn);
   const dlg = pvpConnDialog('Manual connection – join', body);
   dlg.box.id = 'pvpManualJoinDialog';
+  const retry = () => { dlg.programmatic = true; dlg.close(); pvpTeardown(false); openPvpManualJoin(); };
   btn.addEventListener('click', async () => {
     st.classList.remove('gwErr');
     btn.disabled = true;
+    st.textContent = 'Creating your reply code (this takes a few seconds)…';
     try {
       const transport = makeManualTransport();
       pvpBegin(transport, 'guest');
@@ -4547,7 +4755,102 @@ function openPvpManualJoin() {
       st.textContent = '2. Send this reply code back to your friend:';
       const cb = pvpCopyBox(answer, true); cb.box.id = 'pvpAnswerCode'; body.appendChild(cb.wrap);
       body.appendChild(pvpStatusLine('Waiting for your friend to connect…'));
+      // the friend may take a while to paste the reply: no time limit here,
+      // but a definite ICE failure is reported
+      const watch = pvpWatch(dlg, body, retry);
+      watch.setLabel('Waiting for your friend');
+      transport.onprogress = (p) => { if (p === 'failed') watch.fail(PVP_MSG_BLOCKED + ' (Manual codes can only be used once – Retry, then send your friend the new reply code.)'); };
     } catch (e) { st.textContent = e.message || String(e); st.classList.add('gwErr'); btn.disabled = false; pvpTeardown(false); }
+  });
+}
+
+/* ---- "Test my connection": what this network allows ----
+   - matchmaking service (PeerJS broker) reachable?
+   - direct internet route: a server-reflexive (srflx) candidate from STUN
+   - relay: a relay candidate from the TURN server (and over which protocol) */
+async function pvpConnectionTest(onUpdate) {
+  const res = { broker: null, gathered: false, host: 0, srflx: 0, relay: 0, relayVia: [], errors: [] };
+  const upd = () => { try { onUpdate && onUpdate(res); } catch (e) {} };
+  const ice = (async () => {
+    let pc;
+    try {
+      pc = new RTCPeerConnection({ iceServers: pvpIceServers() });
+      pc.createDataChannel('probe');
+      pc.onicecandidate = (e) => {
+        if (!e.candidate || !e.candidate.candidate) return;
+        const c = e.candidate, line = c.candidate;
+        const type = c.type || (line.match(/ typ (\w+)/) || [])[1];
+        if (type === 'host') res.host++;
+        if (type === 'srflx' || type === 'prflx') res.srflx++;
+        if (type === 'relay') {
+          res.relay++;
+          const proto = c.relayProtocol || ((c.url || '').startsWith('turns:') ? 'tls' : (c.url || '').includes('transport=tcp') ? 'tcp' : 'udp');
+          if (!res.relayVia.includes(proto)) res.relayVia.push(proto);
+        }
+        upd();
+      };
+      pc.onicecandidateerror = (e) => { res.errors.push(`${e.url || ''} ${e.errorCode || ''} ${e.errorText || ''}`.trim()); };
+      await pc.setLocalDescription(await pc.createOffer());
+      await pvpWaitIce(pc, 5000);
+    } catch (e) { res.errors.push(String(e && e.message || e)); }
+    try { pc && pc.close(); } catch (e) {}
+    res.gathered = true; upd();
+  })();
+  const broker = (async () => {
+    try {
+      await pvpLoadPeerJs();
+      res.broker = await new Promise((resolve) => {
+        let done = false;
+        const peer = new Peer(undefined, { config: { iceServers: pvpIceServers() }, debug: 0 });
+        const fin = (v) => { if (done) return; done = true; clearTimeout(tm); try { peer.destroy(); } catch (e) {} resolve(v); };
+        const tm = setTimeout(() => fin(false), 6000);
+        peer.on('open', () => fin(true));
+        peer.on('error', () => fin(false));
+      });
+    } catch (e) { res.broker = false; }
+    upd();
+  })();
+  await Promise.all([ice, broker]);
+  console.info('[PvP] connection test', res);
+  return res;
+}
+function pvpTestSummary(r) {
+  let main, cls;
+  if (r.relay && r.srflx) { main = 'Good: a direct connection should be possible, and the relay server is there as a backup if your friend\'s network blocks it.'; cls = 'good'; }
+  else if (r.relay) { main = 'OK: a direct route was not found, but you will connect via the relay server.'; cls = 'good'; }
+  else if (r.srflx) { main = 'Problem: the relay server is unreachable (a firewall?). Direct connections may still work, but if a game will not connect, this is likely why.'; cls = 'bad'; }
+  else { main = 'Problem: neither the direct route test nor the relay server worked (offline, or a firewall is blocking it). Only games on the same local network can work.'; cls = 'bad'; }
+  const extra = r.broker === false ? 'The matchmaking service (room codes) is unreachable – use “Advanced: connect with manual codes” instead.' : '';
+  return { main, cls, extra };
+}
+function openPvpConnTest() {
+  const body = document.createElement('div'); body.className = 'pvpBody';
+  const list = document.createElement('ul'); list.className = 'pvpTestList'; list.id = 'pvpTestList';
+  const rows = {};
+  [['broker', 'Matchmaking service (room codes)'], ['direct', 'Direct internet route'], ['relay', 'Relay server (for strict networks)']].forEach(([k, label]) => {
+    const li = document.createElement('li'); li.innerHTML = `<span></span>: <b class="wait">checking…</b>`;
+    li.querySelector('span').textContent = label; list.appendChild(li); rows[k] = li.querySelector('b');
+  });
+  const summary = document.createElement('p'); summary.className = 'pvpSummary'; summary.id = 'pvpTestSummary';
+  const extra = document.createElement('p'); extra.className = 'gwNote'; extra.id = 'pvpTestExtra';
+  const head = pvpStatusLine('Checking what your network allows (takes about 5 seconds)…');
+  body.append(head, list, summary, extra);
+  pvpSpinner(body);
+  const dlg = gwDialog({ cls: 'pvpDlg', title: 'Connection test', body, buttons: [{ label: 'Close', secondary: true, id: 'pvpTestClose' }] });
+  dlg.box.id = 'pvpTestDialog';
+  const set = (el, v, okText, badText) => { el.className = v === null ? 'wait' : v ? 'ok' : 'bad'; el.textContent = v === null ? 'checking…' : v ? okText : badText; };
+  const show = (r) => {
+    set(rows.broker, r.broker, 'reachable', 'unreachable');
+    set(rows.direct, r.srflx ? true : r.gathered ? false : null, 'found', 'not found');
+    set(rows.relay, r.relay ? true : r.gathered ? false : null, 'reachable' + (r.relayVia.length ? ' (' + r.relayVia.join(', ').toUpperCase() + ')' : ''), 'unreachable');
+  };
+  pvpConnectionTest(show).then(r => {
+    if (!dlg.el.isConnected) return;
+    show(r);
+    body.querySelectorAll('.pvpSpinnerWrap').forEach(e => e.remove());
+    head.textContent = 'Results:';
+    const sm = pvpTestSummary(r);
+    summary.textContent = sm.main; summary.classList.add(sm.cls); extra.textContent = sm.extra;
   });
 }
 

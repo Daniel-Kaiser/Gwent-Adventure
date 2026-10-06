@@ -35,9 +35,58 @@ connection library (PeerJS) is loaded from a CDN only when a player hosts or joi
    * The host sends an invite code. The joining player pastes it and sends back a reply code. The
      host pastes that and clicks **Connect**.
    * The codes are longer (about 600 characters) but need no third-party service.
-9. **If you cannot connect at all**, one of you is probably behind a strict NAT (some mobile or
-   corporate networks). That needs a TURN relay server. Add one in `PVP_TURN_SERVERS` near the top of
-   the *PVP* section of `game.html`.
+9. **Connecting takes too long?** Once you and your friend have found each other, the game gives the
+   connection 20 seconds. After that it says what went wrong and offers **Retry** / **Back**:
+   * *"No game found with that code"* or *"Could not reach the matchmaking service"*: the friend never
+     reached the room. Check the code, and check that the host is still on the waiting screen.
+   * *"…found each other, but the connection failed"*: the browsers gave up (ICE failed); a network is
+     blocking the connection.
+   * *"…did not open within 20 seconds"*: a timeout, usually for the same reason.
+   * For both of the last two, press **Retry** on both sides.
+   * ICE state changes are written to the browser console (`[PvP] ICE state: …`) for debugging.
+   * A host waiting for nobody is normal and never times out; the popup shows how long it has been
+     waiting.
+10. **Test my connection** (in the Challenge a Friend popup) checks three things and sums them up in
+   plain words:
+   * whether the matchmaking service is reachable;
+   * whether a direct internet route was found (STUN);
+   * whether the relay server is reachable (TURN).
+
+### Troubleshooting checklist (for you and your friend)
+
+1. Both: use exactly the same `game.html`.
+2. Both: open Challenge a Friend → **Test my connection**.
+   * "Good" or "OK" on both sides: room codes should work. If the room code stalls, press **Retry**
+     on both sides, or try the manual codes.
+   * "Matchmaking service unreachable": use **Advanced: connect with manual codes**.
+   * "Relay server unreachable": a firewall blocks the relay. Try another network (a phone hotspot,
+     home Wi-Fi instead of work or school).
+3. If it still fails, note what the test said on both sides and what the "couldn't connect" message
+   said.
+
+### The relay server (TURN)
+
+Some networks (mobile carriers, strict routers, company/school firewalls) block direct browser-to-browser
+connections. Those players connect through a relay server instead.
+
+* **Provider:** a Metered Open Relay account (free tier: **20 GB of relay traffic per month**). A
+  card game sends very little data, so this goes a long way. Only games that actually need the relay
+  use it; direct connections cost nothing.
+* **Where:** the servers and credentials are in `PVP_TURN_SERVERS`, near the top of the *PVP* section
+  of `game.html`. They are used by both the room-code and the manual-code connections. Google STUN is
+  kept as well.
+* **The credentials ship inside the game file on purpose.** Anyone with the file could use them,
+  which at worst uses up the free quota.
+* **To rotate the credentials** (for example if the quota is being used up by someone else):
+  1. In the Metered dashboard, create new TURN credentials and delete the old ones.
+  2. Replace `username` and `credential` in all four `turn:`/`turns:` entries of `PVP_TURN_SERVERS`.
+  3. Both players need the updated file (it is a different build, so old and new copies refuse to
+     play together).
+* **Developer mode → "Force relay (TURN only)"** in the Challenge a Friend popup: makes this browser
+  connect only through the relay. Use it on two computers on the same network to prove the relay works.
+  * Once connected, the route in use (direct or relay) is shown three ways: in the game log
+    ("Connected directly." / "Connected through the relay server."), in the browser console, and as a
+    small badge bottom-left (developer mode only).
 
 It works when opened as a local `file://`; all tests ran that way. It is built to work inside an
 iframe (itch.io) as well, but that has not been tried yet.
@@ -235,13 +284,16 @@ All three share one interface: `send(str)`, `close()`, `onmessage`, `onstatus('o
 * **Room codes (PeerJS)**
   * Library: `peerjs@1.5.4`, loaded lazily from unpkg with jsdelivr as fallback.
   * Broker: the free public PeerJS cloud.
-  * ICE: Google STUN, plus an optional TURN entry in `PVP_TURN_SERVERS`.
+  * ICE: `pvpRtcConfig()`, which is Google STUN plus the Metered STUN/TURN servers in
+    `PVP_TURN_SERVERS`, with `iceTransportPolicy: 'relay'` when Force relay is on. The same config is
+    used for the manual codes.
   * Room id: `gwentadv-v1-<6 chars>`; the prefix avoids collisions with other apps.
   * The guest reconnects automatically every 3 s if the data connection drops. The host accepts a
     reconnect only from the same guest token.
 * **Manual codes**
-  * Plain `RTCPeerConnection` with an ordered data channel and non-trickle ICE (gathering waits up to
-    5 s).
+  * Plain `RTCPeerConnection` (same config) with an ordered data channel and non-trickle ICE.
+  * Gathering waits until it is complete, or 5 s at most, so the relay candidates end up inside the
+    codes.
   * The offer/answer SDP is deflate-compressed and base64-encoded: `GWAO1z:…` for the invite,
     `GWAA1z:…` for the reply.
   * There is no automatic reconnect; ICE may still recover a brief outage by itself.
@@ -311,10 +363,22 @@ and seeded bots driving both seats through the PvP action path. Results:
   screens; a tampered deck list is flagged; a rematch starts a new synced game.
 * **Build mismatch:** refused on both sides.
 
+* **Connection diagnostics** (`t_conn.js`, `t_manual_relay.js`):
+  * Config wiring: PeerJS and the manual codes both get the TURN list. Force relay gives
+    `iceTransportPolicy: 'relay'`.
+  * Room codes with a stand-in broker:
+    * when the two browsers find each other but the data channel never opens, both sides get the
+      "couldn't connect" message after the timeout;
+    * Retry keeps the room code and then connects;
+    * a wrong code says "No game found".
+  * Manual codes with Force relay and no reachable relay (the sandbox): the clear failure message.
+  * The connection test's summaries.
+
 **Not tested** (needs a real internet setup):
 
 * the real PeerJS cloud broker and the CDN download;
-* STUN/TURN across real NATs;
+* STUN/TURN across real NATs, the Metered relay itself, and the "Test my connection" results on real
+  networks;
 * the game inside an itch.io iframe;
 * Safari/Firefox (the tests use Chromium);
 * real long-distance latency.
@@ -322,8 +386,10 @@ and seeded bots driving both seats through the PvP action path. Results:
 ## 7. Known risks / TODO
 
 * **PeerJS public broker:** free and best-effort; it may be down or rate-limited. The manual codes are
-  the fallback. Self-hosting a PeerJS server, or adding TURN, would be the robust upgrade.
-* **Strict NATs** need TURN (`PVP_TURN_SERVERS`); none is configured.
+  the fallback. Self-hosting a PeerJS server would be the robust upgrade.
+* **TURN quota:** the free relay tier is 20 GB a month, and the credentials are public inside the game
+  file. If relay games stop connecting, check the Metered dashboard, then rotate the credentials or
+  upgrade the plan.
 * **Reconnect** works while both pages stay open:
   * the session replays missed messages after a drop;
   * a **page reload** cannot resume (the game state lives in the page), so the match ends.

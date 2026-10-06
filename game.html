@@ -6615,7 +6615,9 @@ function cardPlayResolved(side, card) {
   if (card._longshipFirst === state.turnCounter) {
     delete card._longshipFirst;
     const target = state.players[otherSide(side)].lastPlayedUid || null;
-    p.board.filter(c => c.longshipHit && !c.floatingSpecial).forEach(ls => queueFollowup({ type: 'longship', side, uid: ls.uid, target }));
+    // a Longship that is itself the first card played this turn doesn't
+    // trigger (and nothing later this turn does); Longships already in play do
+    p.board.filter(c => c.longshipHit && !c.floatingSpecial && c.uid !== card.uid).forEach(ls => queueFollowup({ type: 'longship', side, uid: ls.uid, target }));
   }
   p.board.filter(c => c.udalrykSelfHit && c.uid !== card.uid).forEach(u => queueFollowup({ type: 'udalryk', side, uid: u.uid }));
 }
@@ -7016,20 +7018,11 @@ function aiBestKillTarget(amt) {
   const killable = alive.filter(c => c.power <= amt + aiBirnaBonus());
   return killable.length ? pickDamageTarget(killable, (a, b) => a.power > b.power) : null;
 }
-// An Craite Longship(s) the AI has in play hit the player's last played card
-// after the AI's first card this turn: worth something when that hit kills.
-function aiLongshipFirstPlayValue() {
-  const ai = state.players.ai;
-  if (ai._firstPlayEvtTurn === state.turnCounter) return 0;
-  const t = state.players.player.lastPlayedUid && state.players.player.board.find(c => c.uid === state.players.player.lastPlayedUid);
-  if (!t || t.power <= 0) return 0;
-  return t.power <= 1 ? t.power + 1 : 0.5;
-}
 function aiScriptCardValue(c) {
   if (c.id === 'harpy' || c.id === 'monster_egg' || c.id === 'arachas_drone') return 1;
   if (c.id === 'shani') return Math.min(2, state.players.ai.graveyard.filter(isReviveEligibleBronze).length) * 4;
   if (c.id === 'cerys') return state.players.player.board.some(e => e.power > 1) && (state.players.ai.board.some(x => x.birnaFollowup) || aiHasDamageThisTurn(c)) ? 4 : 0;
-  if (c.id === 'an_craite_longship') return aiLongshipFirstPlayValue() + 1;
+  if (c.id === 'an_craite_longship') return 0; // never triggers on its own play
   if (c.id === 'archespore') return 2;
   if (c.id === 'cyclops') { const sac = aiBestSacrifice(c.uid), t = aiBestKillTarget(3); return sac && t ? Math.max(0, t.power - aiKeepValue(sac)) : 0; }
   if (c.id === 'dagon') return -aiDagonCost(c);

@@ -288,7 +288,28 @@
   .card.holgerPending { animation: holgerPulse 1.2s ease-in-out infinite; }
   .card.holgerPending::after { content: '\2694 4'; position: absolute; top: 4px; right: 4px; padding: 1px 5px; border-radius: 8px; background: #7a1c24; color: #fff; font: 700 11px sans-serif; z-index: 5; pointer-events: none; }
   @keyframes holgerPulse { 0%,100% { box-shadow: 0 0 0 2px #c0313a, 0 0 6px 1px rgba(192,49,58,.5); } 50% { box-shadow: 0 0 0 2px #ff5a5a, 0 0 18px 5px rgba(255,90,90,.9); } }
-  .card.bloodthirstNow { box-shadow: 0 0 0 2px #c0313a, 0 0 14px 3px rgba(192,49,58,.75); }
+  /* Bloodthirst: small heart (the icon from the printed "Bloodthirst" line)
+     at the bottom-centre of every card in play that currently has it --
+     below the centred Order bugle, clear of the power badge. */
+  .btHeart {
+    position: absolute;
+    left: 50%;
+    bottom: 3px;
+    width: 19px;
+    height: 19px;
+    transform: translateX(-50%);
+    background: url('icons/bloodthirst_heart.svg') center / contain no-repeat;
+    filter: drop-shadow(0 1px 1.5px #000) drop-shadow(0 0 2px #000a);
+    pointer-events: none;
+    z-index: 39;
+  }
+  /* a tiny beat when this card's Bloodthirst just triggered */
+  .btHeart.btPulse { animation: btPulse .55s ease-out; }
+  @keyframes btPulse {
+    0% { transform: translateX(-50%) scale(1); }
+    35% { transform: translateX(-50%) scale(1.35); }
+    100% { transform: translateX(-50%) scale(1); }
+  }
   .card.tokenAppear { animation: tokenAppear .45s cubic-bezier(.2,.7,.3,1.3); }
   @keyframes tokenAppear {
     0% { transform: scale(.3) translateY(-20px); opacity: 0; }
@@ -430,10 +451,12 @@
     cursor: pointer;
     animation: orderPulse 1.1s ease-in-out infinite;
   }
+  /* used / not usable yet: fully opaque but grey and still (no pulse) */
   .orderBtn.greyed {
     cursor: default;
-    opacity: .5;
-    filter: grayscale(.9) brightness(.65);
+    opacity: 1;
+    filter: grayscale(1) brightness(.8) drop-shadow(0 2px 4px #000a);
+    animation: none;
   }
   /* the whole card (not just the icon) activates a ready Order */
   .side .card.orderReady { cursor: pointer; }
@@ -6271,6 +6294,24 @@ function grantTempBloodthirst(side, card, n) {
   const el = document.querySelector(`.card[data-uid="${card.uid}"]`);
   if (el) showFloatingMessage(`Bloodthirst ${n}`, el);
 }
+// Purely visual: which cards' Bloodthirst just triggered (their heart icon
+// beats once). Kept outside the game state so it never affects sync/hashes.
+const bloodthirstPulseAt = new Map();
+function markBloodthirstPulse(uid) {
+  bloodthirstPulseAt.set(uid, performance.now());
+  requestAnimationFrame(() => {
+    document.querySelectorAll(`.side .card[data-uid="${uid}"] .btHeart`).forEach(h => {
+      h.style.animationDelay = '0ms'; h.classList.remove('btPulse'); void h.offsetWidth; h.classList.add('btPulse');
+    });
+  });
+}
+function bloodthirstPulseElapsed(uid) {
+  const t = bloodthirstPulseAt.get(uid);
+  if (t === undefined) return -1;
+  const e = performance.now() - t;
+  if (e > 550) { bloodthirstPulseAt.delete(uid); return -1; }
+  return Math.round(e);
+}
 let damageEventDepth = 0;
 function onDamageDealt(card, amount, sourceSide, sourceCard) {
   if (!state || state.phase !== 'playing' || !(amount > 0) || !sourceSide) return;
@@ -6308,6 +6349,7 @@ function onDamageDealt(card, amount, sourceSide, sourceCard) {
       const n = bloodthirstOf(c);
       if (n > 0 && c.power > 0 && !c.floatingSpecial) {
         applyPowerDelta(c, n, { side: sourceSide, card: c });
+        markBloodthirstPulse(c.uid);
         gained = true;
       }
     });
@@ -9677,14 +9719,21 @@ function cardEl(card, opts = {}) {
   div.title = card.special ? `${card.name} — special (${card.tier})` : `${card.name} — ${card.power} power (${card.tier})`;
   div.dataset.uid = card.uid;
   if (holgerIsPending(card)) { div.classList.add('holgerPending'); div.title = `${card.name} - waiting for the opponent's next card (4 damage)`; }
-  // red glow on every card in play with Bloodthirst (Veteran's temporary one only for the turn it used its Order)
-  if (state && bloodthirstOf(card) > 0 && findCardOwnerSide(card.uid)) div.classList.add('bloodthirstNow');
   div.innerHTML = `
     <div class="power${powerStateClass(card)}">${card.power}</div>
     <div class="name">${card.name}</div>
     <div class="tier">${card.tier}</div>
     ${needsOverlay ? powerOverlayHtml(card) : ''}
   `;
+  // heart icon on every card in play with Bloodthirst (Veteran's temporary one only for the turn it used its Order)
+  if (state && bloodthirstOf(card) > 0 && findCardOwnerSide(card.uid)) {
+    const h = document.createElement('div');
+    h.className = 'btHeart';
+    const beat = bloodthirstPulseElapsed(card.uid); // re-rendered mid-beat: continue it, don't restart
+    if (beat >= 0) { h.classList.add('btPulse'); h.style.animationDelay = `-${beat}ms`; }
+    h.title = `Bloodthirst ${bloodthirstOf(card)}`;
+    div.appendChild(h);
+  }
   return div;
 }
 

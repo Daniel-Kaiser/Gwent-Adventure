@@ -3,6 +3,70 @@
 <head>
 <meta charset="UTF-8">
 <title>Card Battle</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script>
+/* ---------------------------------------------------------------------------
+   Small-screen scaling. On phones the whole page is laid out at a fixed
+   "virtual" size (560px wide in portrait, 1280px wide in landscape) and
+   scaled to fit. The game's own maths (innerWidth/innerHeight, element rects,
+   pointer coordinates, elementFromPoint) is translated into that virtual
+   space, so animations, dragging and previews line up. Desktop is untouched.
+   --------------------------------------------------------------------------- */
+(function () {
+  const root = document.documentElement;
+  const VP = window.VP = { on: false, s: 1, x: 0, y: 0, W: 0, H: 0, portrait: false };
+  const dW = Object.getOwnPropertyDescriptor(window, 'innerWidth') || Object.getOwnPropertyDescriptor(Window.prototype, 'innerWidth');
+  const dH = Object.getOwnPropertyDescriptor(window, 'innerHeight') || Object.getOwnPropertyDescriptor(Window.prototype, 'innerHeight');
+  const realW = () => (dW && dW.get ? dW.get.call(window) : root.clientWidth);
+  const realH = () => (dH && dH.get ? dH.get.call(window) : root.clientHeight);
+  function update() {
+    const vw = realW(), vh = realH();
+    const small = vw < 900 || vh < 540;
+    VP.on = small;
+    VP.portrait = small && vh > vw;
+    root.classList.toggle('vp', small);
+    root.classList.toggle('mPortrait', VP.portrait);
+    if (!small) { VP.s = 1; VP.x = VP.y = 0; ['--vw', '--vh'].forEach(p => root.style.removeProperty(p)); return; }
+    const W = VP.portrait ? 560 : 1280;
+    const H = Math.round(W * vh / vw);
+    const s = vw / W;
+    Object.assign(VP, { W, H, s, x: 0, y: 0 });
+    root.style.setProperty('--vpw', W + 'px');
+    root.style.setProperty('--vph', H + 'px');
+    root.style.setProperty('--vps', s);
+    root.style.setProperty('--vw', (W / 100) + 'px');
+    root.style.setProperty('--vh', (H / 100) + 'px');
+  }
+  update();
+  addEventListener('resize', update, true);
+  // capture-phase on window runs before the game's own resize handlers
+  const def = (obj, prop, get) => { try { Object.defineProperty(obj, prop, { get, configurable: true }); } catch (e) {} };
+  def(window, 'innerWidth', () => VP.on ? VP.W : realW());
+  def(window, 'innerHeight', () => VP.on ? VP.H : realH());
+  const gbcr = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function () {
+    const r = gbcr.call(this);
+    if (!VP.on) return r;
+    return new DOMRect((r.left - VP.x) / VP.s, (r.top - VP.y) / VP.s, r.width / VP.s, r.height / VP.s);
+  };
+  const patchXY = (proto, a, b) => {
+    for (const k of [a, b]) {
+      const d = Object.getOwnPropertyDescriptor(proto, k); if (!d || !d.get) continue;
+      const off = k === a ? 'x' : 'y';
+      Object.defineProperty(proto, k, { configurable: true, enumerable: d.enumerable,
+        get() { const v = d.get.call(this); return VP.on ? (v - VP[off]) / VP.s : v; } });
+    }
+  };
+  patchXY(MouseEvent.prototype, 'clientX', 'clientY');
+  patchXY(MouseEvent.prototype, 'pageX', 'pageY');
+  patchXY(MouseEvent.prototype, 'x', 'y');
+  if (window.Touch) { patchXY(Touch.prototype, 'clientX', 'clientY'); patchXY(Touch.prototype, 'pageX', 'pageY'); }
+  for (const fn of ['elementFromPoint', 'elementsFromPoint']) {
+    const orig = Document.prototype[fn]; if (!orig) continue;
+    Document.prototype[fn] = function (x, y) { return VP.on ? orig.call(this, x * VP.s + VP.x, y * VP.s + VP.y) : orig.call(this, x, y); };
+  }
+})();
+</script>
 <style>
   @font-face {
     font-family: 'GwentFont';
@@ -50,7 +114,7 @@
     font-family: 'GwentFont', 'Segoe UI', system-ui, sans-serif;
     background: radial-gradient(circle at 50% 0%, #3a2716, var(--bg) 70%);
     color: var(--text);
-    height: 100vh;
+    height: calc(var(--vh, 1vh) * 100);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -480,8 +544,8 @@
   #targetLineSvg {
     position: fixed;
     inset: 0;
-    width: 100vw;
-    height: 100vh;
+    width: calc(var(--vw, 1vw) * 100);
+    height: calc(var(--vh, 1vh) * 100);
     pointer-events: none;
     z-index: 500;
     display: none;
@@ -951,7 +1015,7 @@
   #overlayBox h2 { color: var(--accent); margin-top: 0; }
   #overlayBox .mullHand { display: flex; gap: 8px; justify-content: center; margin: 16px 0; flex-wrap: nowrap; }
   #overlayBox.mulliganBox {
-    max-width: min(94vw, 1100px);
+    max-width: min(calc(var(--vw, 1vw) * 94), 1100px);
     padding: 40px 56px;
   }
   #overlayBox.mulliganBox h2 { font-size: 30px; }
@@ -967,7 +1031,7 @@
   }
   /* End-of-game popup -- roughly twice the size (box + fonts) of the default */
   #overlayBox.gameEndBox {
-    max-width: min(94vw, 840px);
+    max-width: min(calc(var(--vw, 1vw) * 94), 840px);
     padding: 60px 80px;
   }
   #overlayBox.gameEndBox h2 { font-size: 48px; }
@@ -1160,8 +1224,8 @@
     background: var(--panel);
     padding: 22px 26px 26px;
     border-radius: 12px;
-    max-width: 90vw;
-    max-height: 84vh;
+    max-width: calc(var(--vw, 1vw) * 90);
+    max-height: calc(var(--vh, 1vh) * 84);
     display: flex;
     flex-direction: column;
   }
@@ -1353,7 +1417,7 @@
   }
   #settingsModal.show { display: flex; }
   #settingsBox {
-    position: relative; width: 360px; max-width: calc(100vw - 32px);
+    position: relative; width: 360px; max-width: calc(calc(var(--vw, 1vw) * 100) - 32px);
     background: var(--panel); border-radius: 14px; padding: 20px 24px 24px;
     box-shadow: 0 16px 40px #000c; color: var(--text);
   }
@@ -1398,8 +1462,8 @@
     background: var(--panel);
     padding: 28px 32px 30px;
     border-radius: 14px;
-    max-width: min(90vw, 560px);
-    max-height: 82vh;
+    max-width: min(calc(var(--vw, 1vw) * 90), 560px);
+    max-height: calc(var(--vh, 1vh) * 82);
     overflow-y: auto;
     box-shadow: 0 16px 40px #000c;
   }
@@ -1488,7 +1552,7 @@
     border-radius: 12px;
     padding: 16px 18px;
     width: 380px;
-    max-width: calc(100vw - 32px);
+    max-width: calc(calc(var(--vw, 1vw) * 100) - 32px);
     box-shadow: 0 16px 40px #000c;
     font-family: 'GwentFont', serif;
   }
@@ -1679,7 +1743,7 @@
   #libraryModal.deckBuild #libraryGrid .card { cursor: grab; touch-action: none; user-select: none; }
   #libraryGrid .card.deckFull { filter: grayscale(1) brightness(.55); cursor: not-allowed !important; }
   .deckBadge { position: absolute; right: 4px; bottom: 3px; z-index: 3; font: 700 11px Arial, sans-serif; background: #000c; color: var(--text); padding: 1px 6px; border-radius: 6px; pointer-events: none; }
-  #deckScreen { display: none; position: fixed; top: 20px; bottom: 20px; left: 20px; right: 36%; z-index: 2100; --slotW: clamp(60px, calc((64vw - 40px - 48px - 7 * 12px) / 8), 92px); background: var(--panel); border-radius: 14px; box-shadow: 0 16px 40px #000c; padding: 20px 24px; flex-direction: column; min-height: 0; }
+  #deckScreen { display: none; position: fixed; top: 20px; bottom: 20px; left: 20px; right: 36%; z-index: 2100; --slotW: clamp(60px, calc((calc(var(--vw, 1vw) * 64) - 40px - 48px - 7 * 12px) / 8), 92px); background: var(--panel); border-radius: 14px; box-shadow: 0 16px 40px #000c; padding: 20px 24px; flex-direction: column; min-height: 0; }
   #deckScreen.show { display: flex; }
   #deckHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   #deckHeader h2 { margin: 0; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; }
@@ -1706,7 +1770,7 @@
 
   /* ---- Themed popups used by the deck builder / Select deck ---- */
   .gwDlgOverlay { position: fixed; inset: 0; background: #0009; display: flex; align-items: center; justify-content: center; z-index: 2600; }
-  .gwDlg { position: relative; width: 460px; max-width: calc(100vw - 32px); max-height: calc(100vh - 40px); background: var(--panel); border-radius: 14px; padding: 22px 26px 22px; box-shadow: 0 16px 40px #000c; color: var(--text); display: flex; flex-direction: column; gap: 12px; }
+  .gwDlg { position: relative; width: 460px; max-width: calc(calc(var(--vw, 1vw) * 100) - 32px); max-height: calc(calc(var(--vh, 1vh) * 100) - 40px); background: var(--panel); border-radius: 14px; padding: 22px 26px 22px; box-shadow: 0 16px 40px #000c; color: var(--text); display: flex; flex-direction: column; gap: 12px; }
   .gwDlg.wide { width: 640px; }
   .gwDlg h2 { margin: 0 0 2px; color: var(--accent); font-family: 'GwentFont', serif; letter-spacing: 1px; text-align: center; }
   .gwDlgBody { overflow-y: auto; min-height: 0; font-size: 14px; display: flex; flex-direction: column; gap: 8px; }
@@ -1903,7 +1967,7 @@
     padding: 6px 16px; border-radius: 16px; background: #000b; color: var(--text); font-size: 14px; letter-spacing: .3px; box-shadow: 0 4px 14px #0008; }
   #pvpWaitBanner.show { display: block; animation: pvpPulse 1.6s ease-in-out infinite; }
   @keyframes pvpPulse { 0%,100% { opacity: 1; } 50% { opacity: .65; } }
-  #pvpNetBanner { position: fixed; left: 50%; top: 8px; transform: translateX(-50%); max-width: calc(100vw - 360px); z-index: 2700; display: none; align-items: center; justify-content: center; gap: 14px;
+  #pvpNetBanner { position: fixed; left: 50%; top: 8px; transform: translateX(-50%); max-width: calc(calc(var(--vw, 1vw) * 100) - 360px); z-index: 2700; display: none; align-items: center; justify-content: center; gap: 14px;
     padding: 7px 14px; border-radius: 10px; background: #7a1c24f0; color: #fff; font-weight: 700; box-shadow: 0 4px 14px #0009; }
   #pvpNetBanner.show { display: flex; }
   .pvpDeckCheck { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
@@ -1937,7 +2001,7 @@
   }
   #newGameModal.show { display: flex; }
   #newGameBox {
-    position: relative; width: 380px; max-width: calc(100vw - 32px);
+    position: relative; width: 380px; max-width: calc(calc(var(--vw, 1vw) * 100) - 32px);
     background: var(--panel); border-radius: 14px; padding: 22px 26px 26px;
     box-shadow: 0 16px 40px #000c; color: var(--text);
     display: flex; flex-direction: column; align-items: stretch; gap: 12px;
@@ -1954,6 +2018,28 @@
     background: #3a2f25; color: #8c7e6a; border-color: #54463a; cursor: not-allowed;
   }
   .newGameOption .comingSoon { display: block; font-family: 'BrandonGrotesque', 'Segoe UI', sans-serif; font-size: 11px; letter-spacing: .5px; font-weight: 400; margin-top: 3px; }
+
+  /* =================== Small screens (see the scaling script in <head>) =================== */
+  html.vp { overflow: hidden; background: #000; height: 100%; }
+  html.vp body { position: absolute; left: 0; top: 0; width: var(--vpw); height: var(--vph); transform: scale(var(--vps)); transform-origin: 0 0; box-sizing: border-box; }
+  html.vp, html.vp body { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; touch-action: manipulation; -webkit-text-size-adjust: 100%; }
+
+  /* ---- Phone held upright: 560px-wide layout ---- */
+  html.mPortrait #gameWrap { flex-direction: column; margin: 0; gap: 6px; }
+  html.mPortrait #board { display: contents; }
+  html.mPortrait #oppHandRow { order: 1; }
+  html.mPortrait #oppSide { order: 2; }
+  html.mPortrait #rightPanel { order: 3; flex-direction: row; min-width: 0; justify-content: space-between; align-items: center; padding: 0 4px; flex: 0 0 auto; }
+  html.mPortrait #playerSide { order: 4; }
+  html.mPortrait #playerHand { order: 5; }
+  html.mPortrait #overlayBox.mulliganBox { padding: 24px 14px; max-width: 536px; }
+  html.mPortrait #overlayBox.mulliganBox .mullHand { zoom: 1.1; gap: 8px; flex-wrap: wrap; }
+  html.mPortrait #deckScreen { top: 8px; left: 8px; right: 8px; bottom: auto; height: calc(54% - 12px); padding: 12px 12px; --slotW: 56px; }
+  html.mPortrait #deckScreen .deckRow { gap: 6px; margin-bottom: 8px; }
+  html.mPortrait #deckHeader h2 { font-size: 20px; }
+  html.mPortrait #deckTools { gap: 6px; }
+  html.mPortrait #libraryModal.deckBuild { left: 0; width: 100%; top: auto; bottom: 0; height: 46%; }
+  html.mPortrait #libraryModal.deckBuild #libraryBox { width: calc(100% - 16px); height: calc(100% - 8px); padding: 12px 12px 14px; }
 </style>
 </head>
 <body>
@@ -9746,7 +9832,19 @@ function attachPreview(el, card) {
   el.__previewCard = card;
   el.addEventListener('mouseenter', () => showPreview(card, el));
   el.addEventListener('mouseleave', () => { if (previewAnchor === el) hidePreview(); });
+  // Touch screens have no hover: a tap on the card shows the inspector instead.
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return;
+    previewMouseX = e.clientX; previewMouseY = e.clientY;
+    showPreview(card, el);
+  });
 }
+// ...and a tap anywhere that isn't a card hides it again.
+document.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse') return;
+  let t = e.target; while (t && !t.__previewCard) t = t.parentElement;
+  if (!t) hidePreview();
+}, true);
 // Watchdog: the inspector must never outlive its source. Every frame while it
 // is shown, check that the anchor is still in the DOM, still rendered, and
 // still the element under the pointer (an overlay/modal opening on top of it,
@@ -9757,6 +9855,7 @@ function attachPreview(el, card) {
 function previewWatchdog() {
   requestAnimationFrame(previewWatchdog);
   if (!previewEl.classList.contains('show')) return;
+  if (drag || deckDrag) { hidePreview(); return; }
   const a = previewAnchor;
   let ok = !!(a && a.isConnected && a.getClientRects().length > 0 &&
               getComputedStyle(a).visibility !== 'hidden');
@@ -11882,8 +11981,13 @@ window.addEventListener('pointermove', (e) => {
   const slot = deckSlotAt(e.clientX, e.clientY);
   deckBody.querySelectorAll('.deckSlot.slotOver').forEach(s => s.classList.remove('slotOver'));
   if (slot && cardFitsSlot(d.card, slot.dataset.tier)) slot.classList.add('slotOver');
-  libraryModal.classList.toggle('dropRemove', !!d.from && !slot && e.clientX >= window.innerWidth * 0.64);
+  libraryModal.classList.toggle('dropRemove', !!d.from && !slot && overLibraryPanel(e));
 });
+// Dropping a deck card anywhere over the library panel removes it from the deck.
+function overLibraryPanel(e) {
+  const r = document.getElementById('libraryBox').getBoundingClientRect();
+  return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+}
 function endDeckDrag(e, cancel) {
   const d = deckDrag; if (!d) return;
   deckDrag = null;
@@ -11905,7 +12009,7 @@ function endDeckDrag(e, cancel) {
     } else {
       deckSlots[tier][idx] = d.card.id; ok = true;
     }
-  } else if (d.from && e.clientX >= window.innerWidth * 0.64) {
+  } else if (d.from && overLibraryPanel(e)) {
     deckSlots[d.from.tier][d.from.idx] = null; ok = true;
   }
   if (ok) { SFX.place(); deckChanged(); }
@@ -12252,7 +12356,7 @@ function openSelectDeck(onPlay, opts) {
   const decks = readDecks();
   let sel = readLastDeck();
   if (sel !== 'random' && !decks.some(d => d.id === sel && deckComplete(d))) sel = 'random';
-  const list = document.createElement('div'); list.id = 'selectDeckList'; list.style.cssText = 'display:flex;flex-direction:column;gap:8px;overflow-y:auto;max-height:50vh';
+  const list = document.createElement('div'); list.id = 'selectDeckList'; list.style.cssText = 'display:flex;flex-direction:column;gap:8px;overflow-y:auto;max-height:calc(var(--vh, 1vh) * 50)';
   const rows = [];
   const addRow = (id, name, meta, ok) => {
     const row = document.createElement('div'); row.className = 'deckListRow pick' + (ok ? '' : ' off'); row.dataset.deck = id;
